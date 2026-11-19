@@ -1,0 +1,582 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Crystal Winkel</title>
+<meta name="theme-color" content="#0E1F42">
+<meta name="robots" content="noindex, nofollow">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="icon" href="/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Winkel">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+
+<!-- Pincode -->
+<section id="slot" hidden>
+  <form id="slot-form" class="slot-kaart">
+    <img src="/apple-touch-icon.png" alt="" width="64" height="64">
+    <h1>Crystal Winkel</h1>
+    <p>Geef de pincode van de winkel in.</p>
+    <input id="slot-pin" type="password" inputmode="numeric" autocomplete="current-password" placeholder="Pincode" required>
+    <button class="knop hoofd" type="submit">Openen</button>
+    <p id="slot-fout" class="fout" role="alert"></p>
+  </form>
+</section>
+
+<!-- App -->
+<div id="app" hidden>
+  <header class="balk">
+    <div class="balk-binnen">
+      <h1 class="merk"><img class="merk-logo" src="/icon-192.png" alt="">Crystal <span>Winkel</span></h1>
+      <div class="balk-knoppen">
+        <button id="todo-knop" class="knop balk-knop">📋 Te doen <b id="n-todo" hidden></b></button>
+        <button id="planning-knop" class="knop balk-knop">🗓 Planning</button>
+        <button id="kassa-knop" class="knop balk-knop">💰 Kassa</button>
+        <button id="klanten-knop" class="knop balk-knop">👥 Klanten</button>
+        <button id="prijslijsten-knop" class="knop balk-knop">💶 Prijslijsten</button>
+        <button id="partner-knop" class="knop balk-knop">🚚 Partner</button>
+        <button id="agenda-knop" class="knop balk-knop">🚐 Ophalen</button>
+        <button id="instellingen-knop" class="knop icoon" aria-label="Instellingen" title="Instellingen">⚙</button>
+        <button id="nieuw" class="knop hoofd">+ Nieuwe bon</button>
+      </div>
+    </div>
+    <div class="balk-binnen">
+      <input id="zoek" type="search" placeholder="🔍 Zoek naam, gsm of bonnr." aria-label="Zoeken" enterkeyhint="search">
+    </div>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="binnen" aria-selected="true">In behandeling <b id="n-binnen">0</b></button>
+      <button role="tab" data-tab="partner" aria-selected="false">🚚 Bij partner <b id="n-partner">0</b></button>
+      <button role="tab" data-tab="klaar" aria-selected="false">Klaar <b id="n-klaar">0</b></button>
+      <button role="tab" data-tab="opgehaald" aria-selected="false">Opgehaald</button>
+    </nav>
+  </header>
+
+  <main>
+    <p id="melding" class="melding" role="status" hidden></p>
+    <div id="herinnering" class="herinnering" hidden></div>
+    <p id="spiegel-balk" class="spiegel-balk" hidden></p>
+    <ul id="lijst" class="lijst"></ul>
+    <p id="leeg" class="leeg" hidden></p>
+    <p id="voetnoot" class="voetnoot" hidden></p>
+  </main>
+</div>
+
+<!-- Te doen: wat vandaag moet gebeuren, en de eigen takenlijst -->
+<dialog id="todo" class="paneel">
+  <div class="paneel-kop">
+    <h2>Te doen</h2>
+    <button class="sluit" data-sluit aria-label="Sluiten">✕</button>
+  </div>
+  <div class="paneel-inhoud">
+    <div id="td-vandaag"></div>
+    <section id="td-eigen">
+      <h3 class="td-kop">📝 Eigen taken</h3>
+      <form id="td-form" class="td-form">
+        <input name="tekst" maxlength="200" placeholder="Nieuwe taak, bv. zeep bestellen" autocomplete="off" aria-label="Nieuwe taak" enterkeyhint="done">
+        <label class="td-tegen">Tegen <small>(mag leeg)</small><input name="tegen" type="date"></label>
+        <button class="knop hoofd" type="submit">Toevoegen</button>
+      </form>
+      <p id="td-fout" class="fout" role="alert"></p>
+      <ul id="td-lijst" class="td-lijst"></ul>
+      <div class="d-knoppen"><button type="button" class="knop klein" id="td-wis-klaar" hidden>Afgewerkte taken wissen</button></div>
+    </section>
+  </div>
+</dialog>
+
+<!-- Planning: de week (werk + wie werkt) -->
+<dialog id="planning" class="paneel breed">
+  <div class="paneel-kop">
+    <h2>Planning</h2>
+    <button class="sluit" data-sluit aria-label="Sluiten">✕</button>
+  </div>
+  <div class="paneel-inhoud">
+    <div class="pn-balk">
+      <button type="button" class="knop klein" id="pn-vorige" aria-label="Vorige week">‹</button>
+      <b id="pn-week"></b>
+      <button type="button" class="knop klein" id="pn-volgende" aria-label="Volgende week">›</button>
+      <button type="button" class="knop klein" id="pn-nu">Deze week</button>
+    </div>
+    <form id="pn-form" class="pn-form">
+      <h3 class="td-kop">👤 Wie werkt wanneer?</h3>
+      <div class="pn-rij">
+        <label>Naam<input name="naam" maxlength="40" autocomplete="off" list="pn-namen" required></label>
+        <label>Dag<select name="datum"></select></label>
+      </div>
+      <div class="pn-rij">
+        <label>Van<input name="van" type="time"></label>
+        <label>Tot<input name="tot" type="time"></label>
+        <button class="knop hoofd" type="submit">Toevoegen</button>
+      </div>
+      <datalist id="pn-namen"></datalist>
+      <p id="pn-fout" class="fout" role="alert"></p>
+      <button type="button" class="knop klein" id="pn-kopieer" hidden>Personeel van vorige week overnemen</button>
+    </form>
+    <div id="pn-dagen"></div>
+  </div>
+</dialog>
+
+<!-- Bon bekijken -->
+<dialog id="detail" class="paneel">
+  <div class="paneel-kop">
+    <h2 id="d-titel"></h2>
+    <button class="sluit" data-sluit aria-label="Sluiten">✕</button>
+  </div>
+  <div id="d-inhoud" class="paneel-inhoud"></div>
+</dialog>
+
+<!-- Bon maken of wijzigen -->
+<dialog id="formulier" class="paneel">
+  <form id="f" method="dialog" novalidate>
+    <div class="paneel-kop">
+      <h2 id="f-titel">Nieuwe bon</h2>
+      <button type="button" class="sluit" data-sluit aria-label="Sluiten">✕</button>
+    </div>
+    <div class="paneel-inhoud">
+      <fieldset class="stap" data-stap="1">
+        <legend><span class="stap-nr">1</span>Naam van de klant</legend>
+        <label>Naam *<input name="naam" autocomplete="off" required></label>
+        <div class="rij">
+          <label>Telefoon<input name="telefoon" type="tel" inputmode="tel" autocomplete="off" placeholder="0470 12 34 56"></label>
+          <label>E-mail<input name="email" type="email" autocomplete="off"></label>
+        </div>
+        <div id="f-klanten" class="klant-sug" hidden></div>
+        <label class="vink" id="f-bewaar-klant" hidden><input type="checkbox" name="bewaarKlant"> Klant bewaren in Klanten <small>(voor een vaste klant; anders wordt de klant niet bewaard)</small></label>
+      </fieldset>
+
+      <fieldset class="stap" data-stap="2">
+        <legend><span class="stap-nr">2</span>Wat brengt de klant binnen? <small>(meerdere mogelijk)</small></legend>
+        <div class="keuzes" id="f-soort">
+          <button type="button" data-soort="Strijk">Strijk</button>
+          <button type="button" data-soort="Was">Was</button>
+          <button type="button" data-soort="Droogkuis">Droogkuis</button>
+          <button type="button" data-soort="Schoenen">Schoenen</button>
+          <button type="button" data-soort="Motorkleding">Motorkleding</button>
+          <button type="button" data-soort="Ander">Ander</button>
+        </div>
+      </fieldset>
+
+      <fieldset class="stap" data-stap="3">
+        <legend><span class="stap-nr">3</span>Stukken <small>(droogkuis altijd invullen; strijk en was mag ook later)</small></legend>
+        <label id="f-vliegtuig-veld" class="vlek-uitleg" hidden>✈ Vliegtuig <small>(verplicht voor deze klant, bv. registratie OO-ABC)</small><input name="vliegtuig" maxlength="40" placeholder="Vliegtuig" autocomplete="off"></label>
+        <div id="f-kilo" class="f-kilo" hidden>
+          <b>Was per kilo</b> <span id="f-kilo-prijs"></span>
+          <input id="f-kg" inputmode="decimal" placeholder="kg" aria-label="Aantal kilo" autocomplete="off">
+          <button type="button" class="knop" id="f-kilo-plus">Toevoegen</button>
+        </div>
+        <p id="f-vlekken" class="vlek-uitleg" hidden>⚠ Deze klant krijgt een bon met vlekkencontrole. Kijk elk stuk na en duid met "Vlek" aan hoeveel stukken een vlek hebben.</p>
+        <div class="stuk-toevoegen">
+          <input id="f-stuk" placeholder="Zoek of typ een stuk: hemd, mantel, laken…" aria-label="Stuk zoeken" autocomplete="off" enterkeyhint="done">
+        </div>
+        <div id="f-suggesties"></div>
+        <button type="button" class="knop klein" id="f-vast" hidden title="Deze stukken komen dan vanzelf op elke nieuwe bon van deze klant">⭐ Bewaar als vaste stukken van deze klant</button>
+        <table class="stukken" id="f-tabel">
+          <tbody id="f-regels"></tbody>
+          <tfoot>
+            <tr class="f-korting-rij"><td>Korting op de bon</td><td class="bedrag"><input id="f-korting" inputmode="decimal" placeholder="0" aria-label="Korting op de bon">
+              <select id="f-korting-soort" aria-label="Korting in procent of euro"><option value="%">%</option><option value="€">€</option></select></td></tr>
+            <tr><td>Totaal</td><td id="f-totaal" class="bedrag">€ 0,00</td></tr>
+          </tfoot>
+        </table>
+      </fieldset>
+
+      <fieldset class="stap" data-stap="4">
+        <legend><span class="stap-nr">4</span>Wanneer mag de klant het ophalen?</legend>
+        <label class="f-binnen">Binnengebracht op <small>(staat op de bon; pas aan als u het eerder ophaalde, bv. op de luchthaven)</small><input name="binnenDatum" type="date" required></label>
+        <span class="f-binnen" style="margin:0 0 4px">Klaar op</span>
+        <div class="rij">
+          <input name="klaarTegen" type="date" aria-label="Klaar tegen">
+          <div class="keuzes klein">
+            <button type="button" data-dagen="1">Morgen</button>
+            <button type="button" data-dagen="2">+2 dagen</button>
+            <button type="button" data-dagen="7">+1 week</button>
+          </div>
+        </div>
+        <label class="f-levering">🚐 Wij brengen terug naar <small>(ophaaldienst; leeg = klant haalt zelf af)</small><input name="levering" maxlength="160" autocomplete="off" placeholder="Adres of plaats, bv. kantine"></label>
+      </fieldset>
+
+      <fieldset class="stap" data-stap="5">
+        <legend><span class="stap-nr">5</span>Tickets en locatie <small>(één ticket per zak, mand of hanger; elk ticket scan je bij het teruggeven)</small></legend>
+        <div class="t-aantal" id="f-t-stappen">
+          <button type="button" data-t-stap="-1" aria-label="Eén ticket minder">−</button>
+          <b id="f-t-aantal">1 ticket</b>
+          <button type="button" data-t-stap="1" aria-label="Eén ticket meer">+</button>
+        </div>
+        <div id="f-tickets"></div>
+        <div id="f-loc-snel" class="groep-keuze"></div>
+      </fieldset>
+
+      <fieldset class="stap" data-stap="6">
+        <legend><span class="stap-nr">6</span>Betaling en opmerking <small>(mag leeg)</small></legend>
+        <div class="rij">
+          <label class="vink"><input name="betaald" type="checkbox"> Al betaald</label>
+          <select name="betaalwijze" aria-label="Betaalwijze">
+            <option value="">Betaalwijze…</option>
+            <option value="cash">Cash</option>
+            <option value="kaart">Kaart</option>
+            <option value="factuur">Via factuur</option>
+          </select>
+        </div>
+        <label>Opmerking<textarea name="opmerking" rows="2" placeholder="Bijvoorbeeld: vlek op linkermouw, geen stijfsel"></textarea></label>
+      </fieldset>
+      <p id="f-fout" class="fout" role="alert"></p>
+    </div>
+    <div class="paneel-voet">
+      <label class="vink" id="f-print-label" style="margin-right:auto;font-size:.9rem"><input type="checkbox" id="f-print"> Klantenbon en tickets afdrukken</label>
+      <button type="button" class="knop" data-sluit>Annuleren</button>
+      <button type="submit" class="knop hoofd" id="f-bewaar">Bon maken</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Instellingen -->
+<dialog id="instellingen" class="paneel">
+  <div class="paneel-kop">
+    <h2>Instellingen</h2>
+    <button class="sluit" data-sluit aria-label="Sluiten">✕</button>
+  </div>
+  <div class="paneel-inhoud">
+    <fieldset>
+      <legend>Afdrukken</legend>
+      <label class="vink"><input type="checkbox" id="i-print"> Bonnen meteen afdrukken: de klantenbon en de tickets bij een nieuwe bon, de afhaalbon bij het ophalen</label>
+      <label>Bonnen standaard afdrukken als
+        <select id="i-formaat">
+          <option value="klein">Klein bonnetje (bonprinter)</option>
+          <option value="a4">Groot op A4</option>
+        </select>
+      </label>
+      <p class="tijdlijn">Bij elke bon kan je het formaat ook apart kiezen.</p>
+      <div id="i-printers" hidden>
+        <h4 class="i-sub">Welke printer voor welk bonnetje?</h4>
+        <div id="i-printer-rijen"></div>
+        <p class="tijdlijn">"Afdrukvenster tonen": je kiest telkens zelf, zoals vroeger. Kies je een printer, dan drukt het programma meteen af. Met "Test" komt er een proefafdruk uit die printer.</p>
+      </div>
+      <div class="d-knoppen">
+        <button type="button" class="knop" id="i-testbon">Testbon afdrukken</button>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Scherm</legend>
+      <label>Aanraakscherm (grotere knoppen en een cijferklavier in de kassa)
+        <select id="i-aanraak">
+          <option value="auto">Automatisch</option>
+          <option value="aan">Aan</option>
+          <option value="uit">Uit</option>
+        </select>
+      </label>
+      <p class="tijdlijn">Geldt enkel voor dit toestel.</p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Partners</legend>
+      <p class="tijdlijn">Waar we naartoe sturen wat we niet zelf doen. Scheid de namen met een komma.</p>
+      <form id="i-partners-form" class="rij">
+        <input id="i-partners" maxlength="300" placeholder="Kwikklien, Neven" autocomplete="off" aria-label="Partners">
+        <button type="submit" class="knop">Bewaren</button>
+      </form>
+    </fieldset>
+
+    <fieldset>
+      <legend>Vaste locaties</legend>
+      <p class="tijdlijn">De rekken, manden en kasten van de winkel. Bij een nieuwe bon tik je ze aan voor elk ticket; een bolletje toont waar al iets ligt. Typ bv. "Rek 1-10" om Rek 1 tot Rek 10 in één keer toe te voegen.</p>
+      <form id="i-loc-form" class="rij">
+        <input id="i-loc-nieuw" maxlength="40" placeholder="Bv. Rek 3, Mand 1-20, Hangrek B" autocomplete="off" aria-label="Nieuwe locatie">
+        <button type="submit" class="knop">Toevoegen</button>
+      </form>
+      <div id="i-loc-lijst" class="loc-lijst"></div>
+      <div class="d-knoppen"><button type="button" class="knop klein gevaar" id="i-loc-wis">Alles weghalen</button></div>
+    </fieldset>
+    <fieldset>
+      <legend>Indeling van de winkel</legend>
+      <p class="tijdlijn">Op het mandticket staan de stukken per plaats (kast, rek...), zodat je weet wat waar moet. Kies zelf de plaatsen en welke stukken erbij horen.</p>
+      <div class="d-knoppen"><button type="button" class="knop" id="i-indeling">Indeling aanpassen</button></div>
+    </fieldset>
+    <fieldset>
+      <legend>Streepjescode</legend>
+      <p class="tijdlijn">Op elke klantenbon en elk mandticket staat een streepjescode. Scan die met een USB-scanner en de bon gaat meteen open, klaar om af te rekenen; daarna komt de afhaalbon uit de printer. Zonder scanner: typ het bonnummer in het zoekveld en druk op Enter. Scan de testbon om de scanner te proberen.</p>
+    </fieldset>
+    <p id="i-fout" class="fout" role="alert"></p>
+  </div>
+</dialog>
+
+<dialog id="i-verborgen" class="paneel smal">
+  <div class="paneel-kop"><h2>Koppeling</h2><button class="sluit" data-sluit aria-label="Sluiten">✕</button></div>
+  <div class="paneel-inhoud">
+      <div id="i-gsm">
+        <p class="tijdlijn"><a id="i-gsm-link" target="_blank" rel="noopener"></a></p>
+        <form id="i-gsm-form" class="rij">
+          <label class="vink"><input type="checkbox" id="i-gsm-aan"> Aan</label>
+          <input id="i-gsm-pin" type="password" maxlength="40" autocomplete="off" aria-label="Pincode van de online versie">
+          <button type="submit" class="knop">Bewaren</button>
+        </form>
+        <p class="tijdlijn" id="i-gsm-stand"></p>
+      </div>
+  </div>
+</dialog>
+
+<!-- Prijslijsten afdrukken -->
+<dialog id="prijslijsten" class="paneel">
+  <div class="paneel-kop">
+    <h2>Prijslijsten</h2>
+    <button class="sluit" data-sluit aria-label="Sluiten">✕</button>
+  </div>
+  <div class="paneel-inhoud">
+    <p class="tijdlijn">Afdrukken op A4, met de prijzen zoals ze nu in het programma staan. Kies als printer "Microsoft Print to PDF" voor een PDF.</p>
+    <div class="pl-knoppen">
+      <button type="button" class="knop" id="pl-strijk">🖨 Strijken &amp; wassen</button>
+      <button type="button" class="knop" id="pl-actie" hidden>🖨 Met actie</button>
+      <button type="button" class="knop" id="pl-droog">🖨 Nieuwkuis / droogkuis</button>
+      <button type="button" class="knop" id="pl-schoen">🖨 Schoenen &amp; motorkleding</button>
+      <button type="button" class="knop" id="pl-dc">🖨 Dienstencheques (minuten)</button>
+      <button type="button" class="knop" id="pl-na">🖨 Briefjes "niet aansprakelijk" met handtekening (8 per A4)</button>
+      <div class="pl-deel">
+        <h4 class="i-sub">Doorsturen naar een klant (WhatsApp)</h4>
+        <input id="pl-nummer" type="tel" inputmode="tel" autocomplete="off" placeholder="Gsm-nummer klant, bv. 0470 12 34 56" aria-label="Gsm-nummer van de klant">
+        <p class="tijdlijn">Met nummer: WhatsApp opent het gesprek met die klant, met een link naar de prijslijst. Zonder nummer: je kiest zelf een contact en de PDF gaat mee als bestand.</p>
+      </div>
+      <button type="button" class="knop goud" id="pl-deel-strijk">📤 Stuur prijslijst strijken &amp; wassen</button>
+      <button type="button" class="knop" id="pl-aanpassen">✎ Prijzen aanpassen</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Prijslijst aanpassen -->
+<dialog id="prijslijst" class="paneel breed">
+  <form id="p" method="dialog" novalidate>
+    <div class="paneel-kop">
+      <h2>Prijslijst</h2>
+      <button type="button" class="sluit" data-sluit aria-label="Sluiten">✕</button>
+    </div>
+    <div class="paneel-inhoud">
+      <p class="tijdlijn">Pas een prijs aan, voeg een stuk toe of haal er een weg. Een leeg prijsvak betekent: niet aangeboden. Nieuwe prijzen gelden voor nieuwe bonnen; bestaande bonnen houden hun prijs.</p>
+      <div class="rij p-btw-rij">
+        <input id="p-zoek" type="search" placeholder="Zoek een stuk in de lijst" aria-label="Zoek in de prijslijst" autocomplete="off">
+        <select id="p-btw" aria-label="Prijzen invullen">
+          <option value="incl">Prijzen incl. btw</option>
+          <option value="excl">Prijzen excl. btw (21 % wordt erbij gerekend)</option>
+        </select>
+      </div>
+      <p id="p-ander" class="tijdlijn p-ander"></p>
+      <div id="p-groepen"></div>
+      <p id="p-fout" class="fout" role="alert"></p>
+    </div>
+    <div class="paneel-voet">
+      <button type="button" class="knop gevaar" id="p-standaard" style="margin-right:auto">Standaardprijzen</button>
+      <button type="button" class="knop" data-sluit>Annuleren</button>
+      <button type="submit" class="knop hoofd" id="p-bewaar">Opslaan</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Indeling van de winkel: waar welk stuk naartoe gaat -->
+<dialog id="indeling" class="paneel">
+  <form id="ix" method="dialog" novalidate>
+    <div class="paneel-kop">
+      <h2>Indeling van de winkel</h2>
+      <button type="button" class="sluit" data-sluit aria-label="Sluiten">✕</button>
+    </div>
+    <div class="paneel-inhoud">
+      <p class="tijdlijn">Op het mandticket staan de stukken per plaats. Geef elke plaats een naam en zet erachter welke stukken daar horen, gescheiden door komma's. Een stuk komt bij de eerste plaats die past (met ↑ verander je de volgorde). Wat nergens past, staat onder "Andere stukken".</p>
+      <div id="ix-rijen"></div>
+      <div class="d-knoppen"><button type="button" class="knop" id="ix-plus">+ Plaats toevoegen</button></div>
+      <p id="ix-fout" class="fout" role="alert"></p>
+    </div>
+    <div class="paneel-voet">
+      <button type="button" class="knop gevaar" id="ix-standaard" style="margin-right:auto">Standaardindeling</button>
+      <button type="button" class="knop" data-sluit>Annuleren</button>
+      <button type="submit" class="knop hoofd">Opslaan</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Kassa openen: elke dag bij de eerste keer verplicht -->
+<dialog id="kassa-open" class="paneel smal">
+  <form id="ko" method="dialog" novalidate>
+    <div class="paneel-kop"><h2>Kassa openen</h2></div>
+    <div class="paneel-inhoud">
+      <p id="ko-dag" class="tijdlijn"></p>
+      <label>Hoeveel cash zit er nu in de kassa?
+        <span class="prijs-veld groot">€ <input name="begin" inputmode="decimal" autocomplete="off" placeholder="0,00" required></span>
+      </label>
+      <p id="ko-vorige" class="tijdlijn"></p>
+      <p id="ko-fout" class="fout" role="alert"></p>
+    </div>
+    <div class="paneel-voet"><button type="submit" class="knop hoofd">Kassa openen</button></div>
+  </form>
+</dialog>
+
+<!-- Kassa en dagoverzicht -->
+<dialog id="kassa" class="paneel">
+  <div class="paneel-kop">
+    <h2>Kassa</h2>
+    <button class="sluit" data-sluit aria-label="Sluiten">✕</button>
+  </div>
+  <div class="paneel-inhoud">
+    <label class="dag-kies">Dag <input id="k-dag" type="date"></label>
+    <div id="k-inhoud"></div>
+    <div id="k-dagwis" class="k-dagwis" hidden>
+      <h3>Einde van de dag</h3>
+      <p class="tijdlijn">Drukt het overzicht van vandaag af en wist daarna alle betalingen en opgehaalde bonnen. Bonnen die nog opgehaald moeten worden blijven staan.</p>
+      <button type="button" class="knop hoofd" id="k-dagwis-knop">Dagoverzicht afdrukken en wissen</button>
+    </div>
+    <form id="k-beweging" class="k-form" hidden>
+      <h3>Geld in of uit de kassa</h3>
+      <div class="keuzes" id="k-richting">
+        <button type="button" data-richting="uit" aria-pressed="true">Uit de kassa</button>
+        <button type="button" data-richting="in" aria-pressed="false">In de kassa</button>
+      </div>
+      <div class="rij">
+        <span class="prijs-veld">€ <input name="bedrag" inputmode="decimal" placeholder="0,00" autocomplete="off"></span>
+        <input name="reden" maxlength="80" placeholder="Reden, bv. wisselgeld, naar de bank, aankoop zeep" autocomplete="off">
+      </div>
+      <div class="d-knoppen"><button class="knop hoofd" type="submit">Opslaan</button><button class="knop" type="button" data-annuleer>Annuleren</button></div>
+    </form>
+    <form id="k-sluit" class="k-form" hidden>
+      <h3>Dag afsluiten</h3>
+      <label>Tel de cash in de kassa. Hoeveel zit erin?
+        <span class="prijs-veld groot">€ <input name="geteld" inputmode="decimal" placeholder="0,00" autocomplete="off"></span>
+      </label>
+      <div class="d-knoppen"><button class="knop hoofd" type="submit">Afsluiten en dagoverzicht afdrukken</button><button class="knop" type="button" data-annuleer>Annuleren</button></div>
+    </form>
+    <form id="k-corr" class="k-form" hidden>
+      <h3 id="k-corr-titel">Verbeteren</h3>
+      <div class="keuzes" id="k-corr-wijze"></div>
+      <div class="keuzes" id="k-corr-richting">
+        <button type="button" data-richting="uit" aria-pressed="true">Uit de kassa</button>
+        <button type="button" data-richting="in" aria-pressed="false">In de kassa</button>
+      </div>
+      <div class="rij">
+        <span class="prijs-veld groot">€ <input name="bedrag" inputmode="decimal" placeholder="0,00" autocomplete="off"></span>
+        <input name="reden" maxlength="80" placeholder="Reden" autocomplete="off">
+      </div>
+      <p class="tijdlijn">Elke verbetering blijft zichtbaar in de kassa en op het dagoverzicht.</p>
+      <div class="d-knoppen"><button class="knop hoofd" type="submit">Opslaan</button><button class="knop gevaar" type="button" id="k-corr-weg">Schrappen</button><button class="knop" type="button" data-annuleer>Annuleren</button></div>
+    </form>
+    <p id="k-fout" class="fout" role="alert"></p>
+  </div>
+  <div class="paneel-voet">
+    <button type="button" class="knop" id="k-export">Maand exporteren</button>
+    <button type="button" class="knop" id="k-beweging-knop">Geld in/uit</button>
+    <button type="button" class="knop" id="k-print">Dagoverzicht afdrukken</button>
+    <button type="button" class="knop hoofd" id="k-sluit-knop">Dag afsluiten</button>
+  </div>
+</dialog>
+
+<!-- Droogkuis bij de partner -->
+<dialog id="partner" class="paneel breed">
+  <div class="paneel-kop">
+    <h2>Bij de partner</h2>
+    <button class="sluit" data-sluit aria-label="Sluiten">✕</button>
+  </div>
+  <div class="paneel-inhoud" id="pt-inhoud"></div>
+</dialog>
+
+<!-- Ophaalagenda (uit Google Agenda) -->
+<dialog id="agenda" class="paneel breed">
+  <div class="paneel-kop">
+    <h2>Ophalen &amp; terugbrengen</h2>
+    <button class="sluit" data-sluit aria-label="Sluiten">✕</button>
+  </div>
+  <div class="paneel-inhoud">
+    <div class="ag-balk">
+      <button type="button" class="knop" id="ag-vernieuw">↻ Vernieuwen</button>
+      <select id="ag-dagen" aria-label="Hoe ver vooruit"><option value="7">7 dagen</option><option value="14" selected>14 dagen</option><option value="31">1 maand</option></select>
+      <button type="button" class="knop" id="ag-instellen">⚙ Agenda koppelen</button>
+    </div>
+    <section id="ag-ritten">
+      <h2 class="ag-kop">Geplande ritten</h2>
+      <form id="rit-form" class="rit-form">
+        <div class="keuzes klein" id="rit-soort">
+          <button type="button" data-soort="ophalen" aria-pressed="true">🧺 Ophalen</button>
+          <button type="button" data-soort="terugbrengen" aria-pressed="false">📦 Terugbrengen</button>
+        </div>
+        <div class="rit-rij">
+          <label>Dag<input name="datum" type="date" required></label>
+          <label>Uur (ongeveer)<input name="uur" type="time"></label>
+        </div>
+        <label>Naam<input name="naam" maxlength="80" autocomplete="off" placeholder="Klant of bedrijf" list="rit-namen"></label>
+        <label>Adres<input name="adres" maxlength="160" autocomplete="off" placeholder="Straat en nummer, gemeente"></label>
+        <div class="rit-rij">
+          <label>Telefoon<input name="telefoon" type="tel" maxlength="30" autocomplete="off"></label>
+          <label>Notitie<input name="notitie" maxlength="300" autocomplete="off" placeholder="bv. 3 zakken, bel aan"></label>
+        </div>
+        <datalist id="rit-namen"></datalist>
+        <p id="rit-fout" class="fout" role="alert"></p>
+        <button class="knop hoofd" type="submit">Rit toevoegen</button>
+      </form>
+      <div id="rit-lijst"></div>
+    </section>
+    <div id="ag-leveringen"></div>
+    <h2 class="ag-kop">Agenda</h2>
+    <div id="ag-inhoud"></div>
+    <form id="ag-adres-form" class="ag-adres" hidden>
+      <h3>Google Agenda koppelen</h3>
+      <ol>
+        <li>Maak in Google Agenda (op de computer) een agenda "Ophalen" en zet daar de ophalingen in. Een herhaling (bv. elke maandag) mag.</li>
+        <li>Ga naar <b>Instellingen</b> van die agenda → <b>Agenda integreren</b> → kopieer het <b>geheime adres in iCal-indeling</b>.</li>
+        <li>Plak het hieronder en klik op Bewaren.</li>
+      </ol>
+      <label>Geheim iCal-adres<input name="adres" type="url" placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" autocomplete="off"></label>
+      <p class="fout" id="ag-adres-fout"></p>
+      <button class="knop hoofd" type="submit">Bewaren</button>
+    </form>
+  </div>
+</dialog>
+
+<!-- Klantenbestand -->
+<dialog id="klanten" class="paneel">
+  <div class="paneel-kop">
+    <h2>Klanten</h2>
+    <button class="sluit" data-sluit aria-label="Sluiten">✕</button>
+  </div>
+  <div class="paneel-inhoud">
+    <div class="rij">
+      <input id="kl-zoek" type="search" placeholder="Zoek op naam, gsm-nummer of e-mail" autocomplete="off" aria-label="Klant zoeken">
+      <button type="button" class="knop goud" id="kl-toevoegen">+ Klant toevoegen</button>
+    </div>
+    <p id="kl-aantal" class="tijdlijn"></p>
+    <details id="kl-weg-lang" class="kl-weg-lang" hidden><summary></summary><div id="kl-weg-lijst"></div></details>
+    <ul id="kl-lijst" class="kl-lijst"></ul>
+    <form id="kl-form" class="k-form" hidden>
+      <h3 id="kl-titel"></h3>
+      <label>Naam<input name="naam" maxlength="80"></label>
+      <div class="rij">
+        <label>Telefoon<input name="telefoon" type="tel" maxlength="30"></label>
+        <label>E-mail<input name="email" type="email" maxlength="120"></label>
+      </div>
+      <label>Adres <small>(voor facturen)</small><input name="adres" maxlength="160"></label>
+      <label>Btw-nummer <small>(enkel voor bedrijven)</small><input name="btw" maxlength="30"></label>
+      <label>Notitie<textarea name="notitie" rows="2" maxlength="300" placeholder="Bv. altijd geen stijfsel"></textarea></label>
+      <label class="vink"><input type="checkbox" name="vlekkenrapport"> Speciale A4-bon met vlekkencontrole <small>(per stuk: vlek ja/nee)</small></label>
+      <label class="vink"><input type="checkbox" name="vliegtuig"> Vliegtuig vermelden op elke bon <small>(luchtvaartklanten)</small></label>
+      <label class="vink"><input type="checkbox" name="pro"> Professionele klant <small>(altijd een factuur; bonnen blijven bewaard, net als bij een klant met btw-nummer)</small></label>
+      <label>Kiloprijs was <small>(€ per kg, leeg = geen)</small><input name="kiloprijs" inputmode="decimal" maxlength="10" placeholder="bv. 2,50"></label>
+      <div id="kl-weken" class="kl-weken"></div>
+      <p id="kl-info" class="tijdlijn"></p>
+      <div id="kl-vast" class="kl-vast"></div>
+      <div class="d-knoppen">
+        <button class="knop hoofd" type="submit">Opslaan</button>
+        <button class="knop" type="button" id="kl-bonnen">Bonnen van deze klant</button>
+        <button class="knop goud" type="button" id="kl-nieuw">+ Nieuwe bon</button>
+        <button class="knop" type="button" data-annuleer>Terug</button>
+        <button class="knop gevaar" type="button" id="kl-weg">Klant verwijderen</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+
+
+<datalist id="locaties"></datalist>
+<div id="toast" role="status" hidden></div>
+
+<!-- Afdruk: wordt enkel bij printen getoond -->
+<div id="afdruk" aria-hidden="true"></div>
+<style id="pagina-stijl"></style>
+
+<script src="/prijzen.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,69 @@
+# Bouwt het Windows-programma Crystal Winkel en zet het als release online,
+# telkens als de versie in winkel-app/desktop/package.json verandert.
+# Het programma op de winkel-pc haalt de updates op uit de openbare repo Bogdan-mg/winkel-update
+# (daar staan enkel de installatiebestanden, geen code). Zolang deze repo nog openbaar is, komt
+# elke versie ook hier, zodat oudere programma's de overstap vinden.
+name: Crystal Winkel release
+
+on:
+  push:
+    branches: [main]
+    paths: ['winkel-app/desktop/package.json']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  UPDATES_REPO: Bogdan-mg/winkel-update
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: winkel-app/desktop
+    steps:
+      # Zonder sleutel voor de updates-repo niets bouwen: anders zou het programma op een lege plek zoeken.
+      - name: Sleutel nakijken
+        shell: bash
+        working-directory: .
+        env:
+          UPDATES_TOKEN: ${{ secrets.UPDATES_TOKEN }}
+        run: |
+          if [ -z "$UPDATES_TOKEN" ]; then echo "::error::Het geheim UPDATES_TOKEN ontbreekt"; exit 1; fi
+          GH_TOKEN="$UPDATES_TOKEN" gh api "repos/$UPDATES_REPO" --jq .full_name
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: node kopieer.js && npx electron-builder --win nsis --x64 --publish never
+      - name: Release publiceren
+        shell: bash
+        env:
+          UPDATES_TOKEN: ${{ secrets.UPDATES_TOKEN }}
+          GITHUB_TOKEN_EIGEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V=$(node -p "require('./package.json').version")
+          BESTANDEN=(dist/*.exe dist/*.blockmap dist/latest.yml)
+          ls -l "${BESTANDEN[@]}"
+          publiceer() { # $1 = repo, $2 = token
+            export GH_TOKEN="$2"
+            # Een lege repo kan geen release krijgen: eerst een README zetten.
+            if [ "$(gh api "repos/$1" --jq .size)" = "0" ] && ! gh api "repos/$1/contents/README.md" >/dev/null 2>&1; then
+              gh api -X PUT "repos/$1/contents/README.md" -f message="Crystal Winkel updates" \
+                -f content="$(printf '# Crystal Winkel\n\nInstallatiebestanden en updates van het programma Crystal Winkel.\n' | base64 -w0)" >/dev/null
+            fi
+            # Halve releases van een vorige poging opruimen.
+            gh api "repos/$1/releases" --jq ".[] | select(.draft and .name == \"Crystal Winkel $V\") | .id" | while read -r id; do gh api -X DELETE "repos/$1/releases/$id"; done
+            gh release view "v$V" --repo "$1" >/dev/null 2>&1 || gh release create "v$V" --repo "$1" --draft --title "Crystal Winkel $V" --notes "Crystal Winkel $V"
+            gh release upload "v$V" "${BESTANDEN[@]}" --repo "$1" --clobber
+            # Pas zichtbaar maken als alle bestanden er staan; anders vindt het programma latest.yml nog niet.
+            gh release edit "v$V" --repo "$1" --draft=false --latest
+          }
+          publiceer "$UPDATES_REPO" "$UPDATES_TOKEN"
+          # Ook hier, zolang deze repo openbaar is (voor programma's die nog hier zoeken).
+          if [ "$(GH_TOKEN="$GITHUB_TOKEN_EIGEN" gh api "repos/$GITHUB_REPOSITORY" --jq .private)" = "false" ]; then
+            publiceer "$GITHUB_REPOSITORY" "$GITHUB_TOKEN_EIGEN"
+          fi

@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Crystal Werkbord</title>
+<meta name="theme-color" content="#0F1620">
+<meta name="robots" content="noindex, nofollow">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="icon" href="/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Werkbord">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+
+<section id="slot" hidden>
+  <form id="slot-form" class="slot-kaart">
+    <img src="/apple-touch-icon.png" alt="" width="64" height="64">
+    <h1>Crystal Werkbord</h1>
+    <p>Geef de pincode in.</p>
+    <input id="slot-pin" type="password" inputmode="numeric" autocomplete="current-password" placeholder="Pincode" required>
+    <button class="knop hoofd" type="submit">Openen</button>
+    <p id="slot-fout" class="fout" role="alert"></p>
+  </form>
+</section>
+
+<div id="app" hidden>
+  <header class="kop">
+    <h1>Crystal Werkbord</h1>
+    <p class="sub">Strijkatelier · Lodewijk van Berckenlaan 189, Borgerhout · ma–vr 8–18 u</p>
+    <p class="stand" id="stand"></p>
+  </header>
+
+  <main>
+    <section class="tegels" id="tegels" aria-label="Overzicht"></section>
+
+    <button type="button" class="knop hoofd breed" id="nieuw">+ Nieuwe taak</button>
+
+    <section class="kaart" id="eerst">
+      <h2>Eerst doen <small id="vandaag"></small></h2>
+      <div id="eerst-lijst"></div>
+    </section>
+
+    <section id="wacht-blok" hidden>
+      <h2 class="titel">Wacht op iemand anders</h2>
+      <ul class="taken" id="wacht-lijst"></ul>
+    </section>
+
+    <h2 class="titel">Alles per soort</h2>
+    <div id="soorten"></div>
+    <p id="melding" class="fout" role="alert"></p>
+  </main>
+</div>
+
+<dialog id="formulier">
+  <form id="f" method="dialog" novalidate>
+    <div class="f-kop"><h2 id="f-titel">Nieuwe taak</h2><button type="button" class="sluit" data-sluit aria-label="Sluiten">✕</button></div>
+    <div class="f-inhoud">
+      <label>Wat moet er gebeuren? *<textarea name="titel" rows="2" maxlength="200" required placeholder="bv. Factuur Seety betalen"></textarea></label>
+      <label>Soort<select name="soort"></select></label>
+      <div class="rij">
+        <label>Tegen wanneer <small>(mag leeg)</small><input name="tegen" type="date"></label>
+        <label class="vink"><input name="dringend" type="checkbox"> Dringend</label>
+      </div>
+      <label>Wacht op iemand anders? <small>(mag leeg)</small><input name="wachtOp" maxlength="80" autocomplete="off" placeholder="bv. boekhouder, leverancier"></label>
+      <label>Notitie <small>(mag leeg)</small><textarea name="notitie" rows="2" maxlength="500"></textarea></label>
+      <p id="f-fout" class="fout" role="alert"></p>
+    </div>
+    <div class="f-voet">
+      <button type="button" class="knop gevaar" id="f-wis" hidden>Wissen</button>
+      <button type="button" class="knop" data-sluit>Annuleren</button>
+      <button type="submit" class="knop hoofd" id="f-bewaar">Toevoegen</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" role="status" hidden></div>
+<script src="/app.js"></script>
+</body>
+</html>

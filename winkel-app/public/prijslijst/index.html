@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Prijslijst · Crystal Services</title>
+<meta name="theme-color" content="#0E1F42">
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="/icon-192.png">
+<link rel="stylesheet" href="/app.css">
+<style>
+  .pk-kop{background:var(--navy);color:#fff;padding:22px 16px;padding-top:max(22px,env(safe-area-inset-top));text-align:center;}
+  .pk-kop h1{margin:0;font-size:1.35rem;}
+  .pk-kop p{margin:4px 0 0;color:rgba(255,255,255,.75);}
+  .pk-main{max-width:520px;margin:0 auto;padding:24px 16px 40px;display:grid;gap:12px;text-align:center;}
+  .pk-main .knop{width:100%;min-height:56px;font-size:1.05rem;}
+  .pk-voet{color:var(--ink-soft);font-size:.92rem;margin-top:12px;line-height:1.5;}
+</style>
+</head>
+<body>
+  <header class="pk-kop"><h1>Crystal Services</h1><p>Strijkatelier · Wasserij · Droogkuis</p></header>
+  <main class="pk-main">
+    <p id="pk-tekst">De prijslijst wordt klaargemaakt…</p>
+    <button class="knop hoofd" id="pk-strijken" hidden>📄 Prijslijst strijken &amp; wassen</button>
+    <p class="pk-voet">Lodewijk van Berckenlaan 189, 2140 Borgerhout<br>Tel. <a href="tel:+32494403841">0494 40 38 41</a> · ma–vr van 8 tot 18 uur</p>
+  </main>
+<script src="/prijzen.js"></script>
+<script src="/vendor/jspdf.umd.min.js"></script>
+<script src="/vendor/jspdf.plugin.autotable.min.js"></script>
+<script src="/prijslijst-pdf.js"></script>
+<script>
+(async () => {
+  const tekst = document.getElementById('pk-tekst');
+  let data = { groepen: window.PRIJSLIJST || [], droogkuis: [] , bron: 'standaard' };
+  try { const r = await fetch('/api/prijzen'); if (r.ok) data = await r.json(); } catch {}
+  const droogkuis = data.bron === 'winkel' ? data.droogkuis || [] : window.DROOGKUIS || [];
+  const open = (soort) => {
+    const blob = window.maakPrijslijstPdf(soort, { naam: 'Crystal Services', groepen: data.groepen, droogkuis });
+    const naam = `Prijslijst ${soort === 'droog' ? 'droogkuis' : 'strijken en wassen'} Crystal Services.pdf`;
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new File([blob], naam, { type: 'application/pdf' }));
+    a.download = naam; document.body.appendChild(a); a.click(); a.remove();
+  };
+  document.getElementById('pk-strijken').onclick = () => open('strijk');
+  document.getElementById('pk-strijken').hidden = false;
+  tekst.textContent = 'Tik hieronder om de prijslijst te openen (PDF).';
+})();
+</script>
+</body>
+</html>

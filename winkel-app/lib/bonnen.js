@@ -1,0 +1,1038 @@
+// De regels van de winkel-app: hoe een bon eruitziet en wat je ermee mag doen.
+// Puur rekenwerk, zonder opslag, zodat het makkelijk te testen is.
+
+export const STATUSSEN = ['binnen', 'klaar', 'opgehaald'];
+export const BETAALWIJZEN = ['', 'cash', 'kaart', 'factuur', 'dienstencheques', 'overschrijving'];
+export const SOORTEN = ['Strijk', 'Was', 'Droogkuis', 'Schoenen', 'Motorkleding', 'Ander'];
+export const BEHANDELINGEN = ['strijk', 'was', 'droogkuis', 'ander'];
+
+// Hoe lang opgehaalde bonnen bewaard blijven, in maanden; de winkel kiest zelf tussen 1 en 24.
+export const BEWAAR_MIN = 1;
+export const BEWAAR_MAX = 24;
+export const BETAALWIJZEN_KASSA = ['cash', 'kaart', 'factuur', 'dienstencheques', 'overschrijving'];
+export const STANDAARD_INSTELLINGEN = { bewaarMaanden: 12, formaat: 'klein' };
+
+export const LEEG = {
+  bonnen: [], teller: {}, klanten: {}, instellingen: STANDAARD_INSTELLINGEN,
+  klantenboek: {}, betalingen: [], kassa: {}, taken: [], ritten: [], diensten: [],
+};
+
+/**
+ * Wat enkel online bestaat (bijgehouden op de gsm): de kopie van de winkel-pc overschrijft dit nooit,
+ * en deze handelingen mogen ook als de online versie "enkel kijken" is.
+ */
+export const ONLINE_ENKEL = ['taken', 'ritten', 'diensten'];
+export const ONLINE_HANDELINGEN = ['klantcode', 'taak', 'rit', 'dienst'];
+
+/**
+ * Een gsm-nummer als sleutel: enkel cijfers, met landcode.
+ * "0470 12 34 56", "+32 470123456" en "0032470123456" worden allemaal "32470123456".
+ */
+export function telefoonSleutel(tel) {
+  let d = String(tel || '').replace(/[^\d+]/g, '');
+  if (d.startsWith('+')) d = d.slice(1);
+  else if (d.startsWith('00')) d = d.slice(2);
+  else if (d.startsWith('0')) d = '32' + d.slice(1);
+  return /^\d{8,15}$/.test(d) ? d : '';
+}
+
+const BLOKKEER_NA = 5;
+const BLOKKEER_MS = 15 * 60 * 1000;
+
+const MAX = { naam: 80, telefoon: 30, email: 120, vliegtuig: 40, opmerking: 500, stukNaam: 80, stukken: 60, locatie: 40, tickets: 20 };
+
+const isDag = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+const isUur = (v) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(v || ''));
+const dagIso = (d) => d.toISOString().slice(0, 10);
+
+function tekst(v, max) {
+  return String(v ?? '').trim().slice(0, max);
+}
+
+function bedrag(v) {
+  const n = Math.round(Number(String(v ?? '').replace(',', '.')) * 100) / 100;
+  return Number.isFinite(n) && n >= 0 && n < 10000 ? n : 0;
+}
+
+/** Een prijs mag leeg blijven ("prijs volgt"), bijvoorbeeld bij droogkuis. */
+function prijsOfLeeg(v) {
+  return v === null || v === undefined || String(v).trim() === '' ? null : bedrag(v);
+}
+
+/** Oudere bonnen hebben nog geen behandeling per stuk: afleiden uit de naam. */
+function behandelingVan(s) {
+  if (BEHANDELINGEN.includes(s?.behandeling)) return s.behandeling;
+  const naam = String(s?.naam || '').toLowerCase();
+  if (naam.includes('(strijken)')) return 'strijk';
+  if (naam.includes('(wassen')) return 'was';
+  return 'ander';
+}
+
+function datum(v) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : '';
+}
+
+/**
+ * De datum waarop de was binnengebracht (of bij de klant opgehaald) is. De winkel kan die
+ * kiezen, bv. als de bon pas later gemaakt wordt. Vandaag: het echte tijdstip; een andere
+ * dag: 12 uur 's middags op die dag. Een datum in de toekomst kan niet.
+ */
+function binnenVan(gekozen, iso) {
+  const d = datum(gekozen);
+  if (!d || d === dagVan(iso)) return null;
+  if (d > dagVan(iso)) throw new Fout('De datum van binnenbrengen kan niet in de toekomst liggen');
+  return d + 'T11:00:00.000Z';
+}
+
+export const EXTERN = ['', 'zelf', 'sturen', 'weg', 'terug'];
+
+/** Houdt enkel de velden over die we kennen, met redelijke grenzen. */
+export function schoonStukken(stukken) {
+  if (!Array.isArray(stukken)) return [];
+  return stukken.slice(0, MAX.stukken).flatMap((s) => {
+    const naam = tekst(s?.naam, MAX.stukNaam);
+    if (!naam) return [];
+    // Bij een prijs per kilo mag het aantal een kommagetal zijn (bv. 2,35 kg).
+    const kilo = PER_KG.test(naam);
+    const ruw = Number(String(s?.aantal ?? '').replace(',', '.')) || 1;
+    const aantal = kilo ? Math.min(999, Math.max(0.01, Math.round(ruw * 100) / 100)) : Math.min(999, Math.max(1, Math.round(ruw)));
+    const stuk = { naam, aantal, prijs: prijsOfLeeg(s?.prijs), behandeling: behandelingVan(s) };
+    // Korting op dit stuk, in procent.
+    const korting = Math.round(Number(String(s?.korting ?? '').replace(',', '.')) * 10) / 10;
+    if (korting > 0) stuk.korting = Math.min(100, korting);
+    // Was per kilo (professionele klanten): het gewicht, zodat de kilo's per week op te tellen zijn.
+    const kg = Math.round(Number(String(s?.kg ?? '').replace(',', '.')) * 10) / 10;
+    if (kg > 0 && kg < 10000) stuk.kg = kg;
+    // Droogkuis bij de partner: zelf, te versturen, weg (bij de partner) of terug, met wanneer.
+    if (EXTERN.includes(s?.extern) && s.extern) {
+      stuk.extern = s.extern;
+      if (s.externOp) stuk.externOp = tekst(s.externOp, 40);
+      if (s.vertrokOp) stuk.vertrokOp = tekst(s.vertrokOp, 40);
+      // Bij welke partner (bv. Kwikklien of Neven), en wat de partner ons per stuk kost.
+      if (s.partner) stuk.partner = tekst(s.partner, 40);
+    }
+    const pp = prijsOfLeeg(s?.partnerPrijs);
+    if (pp != null) stuk.partnerPrijs = pp;
+    // Waar een vlek zit (bv. "kraag, linkermouw"); leeg = geen vlek.
+    const vlek = tekst(s?.vlek, 120);
+    if (vlek) {
+      stuk.vlek = vlek;
+      // Hoeveel van de stukken een vlek hebben (bv. 3 van 10 servetten). Optioneel: leeg = niet geteld.
+      const n = Math.round(Number(s?.vlekAantal));
+      if (n >= 1) stuk.vlekAantal = Math.min(n, aantal);
+      else if (s?.vlekAantal === '' || s?.vlekOngeteld) stuk.vlekOngeteld = true;
+      else stuk.vlekAantal = aantal;
+    }
+    return [stuk];
+  });
+}
+
+/** Totaal van de stukken met een prijs; stukken zonder prijs tellen (nog) niet mee. */
+/** Bedrag van één regel: aantal × prijs, min de korting van die regel (in %). */
+export function regelBedrag(s) {
+  return Math.round(s.aantal * (s.prijs ?? 0) * (1 - (s.korting || 0) / 100) * 100) / 100;
+}
+export function totaal(stukken) {
+  return Math.round(stukken.reduce((som, s) => som + regelBedrag(s), 0) * 100) / 100;
+}
+/** Korting op de hele bon: een percentage of een vast bedrag. */
+function schoonKorting(k) {
+  const waarde = Number(String(k?.waarde ?? '').replace(',', '.'));
+  if (!(waarde > 0)) return null;
+  const soort = k?.soort === '€' ? '€' : '%';
+  return { soort, waarde: soort === '%' ? Math.min(100, Math.round(waarde * 10) / 10) : Math.round(waarde * 100) / 100 };
+}
+function bonKortingBedrag(sub, k) {
+  if (!k) return 0;
+  return Math.min(sub, Math.round((k.soort === '%' ? sub * k.waarde / 100 : k.waarde) * 100) / 100);
+}
+
+export function prijsOpen(stukken) {
+  return stukken.some((s) => s.prijs === null);
+}
+
+const SOORT_VAN = { strijk: 'Strijk', was: 'Was', droogkuis: 'Droogkuis' };
+
+/** Wat de klant binnenbracht: de gekozen soorten, aangevuld met wat uit de stukken blijkt. */
+function soortenVan(invoer, stukken) {
+  const gekozen = Array.isArray(invoer.soorten) ? invoer.soorten : invoer.soort ? String(invoer.soort).split(' + ') : [];
+  const set = new Set(gekozen.filter((x) => SOORTEN.includes(x)));
+  for (const st of stukken) if (SOORT_VAN[st.behandeling]) set.add(SOORT_VAN[st.behandeling]);
+  if (!set.size) set.add('Strijk');
+  return SOORTEN.filter((x) => set.has(x));
+}
+
+/**
+ * De tickets van een bon: één per zak, mand of hanger, elk met een eigen locatie in de winkel.
+ * Bij het teruggeven scant de winkel elk ticket. Oude bonnen hebben geen tickets, enkel een locatie.
+ */
+export function schoonTickets(lijst) {
+  if (!Array.isArray(lijst)) return null;
+  const tickets = lijst.slice(0, MAX.tickets).map((t) => ({ locatie: tekst(typeof t === 'string' ? t : t?.locatie, MAX.locatie) }));
+  return tickets.length ? tickets : [{ locatie: '' }];
+}
+const ticketLocaties = (tickets) => tekst(tickets.map((t) => t.locatie).filter(Boolean).join(', '), 200);
+
+function velden(invoer) {
+  const stukken = schoonStukken(invoer.stukken);
+  const soorten = soortenVan(invoer, stukken);
+  if (soorten.includes('Droogkuis') && !stukken.some((st) => st.behandeling === 'droogkuis')) {
+    throw new Fout('Vul bij droogkuis in welke stukken de klant binnenbrengt');
+  }
+  const tickets = schoonTickets(invoer.tickets);
+  return {
+    ...(tickets ? { tickets } : {}),
+    klant: {
+      naam: tekst(invoer.klant?.naam, MAX.naam),
+      telefoon: tekst(invoer.klant?.telefoon, MAX.telefoon),
+      email: tekst(invoer.klant?.email, MAX.email),
+    },
+    soorten,
+    soort: soorten.join(' + '),
+    stukken,
+    ...(() => {
+      const sub = totaal(stukken);
+      const korting = schoonKorting(invoer.korting);
+      const af = bonKortingBedrag(sub, korting);
+      return { korting, subtotaal: sub, kortingBedrag: af, totaal: Math.round((sub - af) * 100) / 100 };
+    })(),
+    prijsOpen: prijsOpen(stukken),
+    vliegtuig: tekst(invoer.vliegtuig, MAX.vliegtuig),
+    opmerking: tekst(invoer.opmerking, MAX.opmerking),
+    // Ophaaldienst: wij halen op bij de klant en brengen terug naar dit adres (leeg = klant komt zelf).
+    levering: tekst(invoer.levering, 160),
+    locatie: tickets ? ticketLocaties(tickets) : tekst(invoer.locatie, MAX.locatie),
+    klaarTegen: datum(invoer.klaarTegen),
+    betaald: Boolean(invoer.betaald),
+    betaalwijze: BETAALWIJZEN.includes(invoer.betaalwijze) ? invoer.betaalwijze : '',
+  };
+}
+
+/**
+ * De eigen prijslijst van de winkel, in dezelfde vorm als prijzen.js:
+ * groepen met stukken (prijs per behandeling) en de droogkuisstukken met hun prijzen.
+ */
+export function schoonPrijslijst(p) {
+  if (!p || typeof p !== 'object') return null;
+  const groepen = (Array.isArray(p.groepen) ? p.groepen : []).slice(0, 30).map((g) => ({
+    titel: tekst(g?.titel, 60) || 'Overige',
+    wassenLabel: tekst(g?.wassenLabel, 30),
+    stukken: (Array.isArray(g?.stukken) ? g.stukken : []).slice(0, 200).flatMap((s) => {
+      const naam = tekst(s?.naam, MAX.stukNaam);
+      if (!naam) return [];
+      const stuk = { naam };
+      for (const k of ['strijken', 'wassen', 'prijs']) {
+        const v = prijsOfLeeg(s?.[k]);
+        if (v !== null) stuk[k] = v;
+      }
+      return [stuk];
+    }),
+  }));
+  // Droogkuis: per stuk de prijs voor luxe, zijde en linnen (een oude lijst heeft enkel namen).
+  const gezien = new Set();
+  const droogkuis = (Array.isArray(p.droogkuis) ? p.droogkuis : []).flatMap((d) => {
+    const naam = tekst(typeof d === 'string' ? d : d?.naam, MAX.stukNaam);
+    if (!naam || gezien.has(naam)) return [];
+    gezien.add(naam);
+    const stuk = { naam };
+    for (const k of ['luxe', 'zijde', 'linne']) {
+      const v = prijsOfLeeg(d?.[k]);
+      if (v !== null) stuk[k] = v;
+    }
+    return [stuk];
+  }).slice(0, 200);
+  return { versie: 2, groepen, droogkuis };
+}
+
+export function instellingenVan(staat) {
+  const i = staat?.instellingen || {};
+  const m = Math.round(Number(i.bewaarMaanden));
+  const uit = {
+    bewaarMaanden: m >= BEWAAR_MIN && m <= BEWAAR_MAX ? m : STANDAARD_INSTELLINGEN.bewaarMaanden,
+    formaat: i.formaat === 'a4' ? 'a4' : 'klein',
+  };
+  // Zonder eigen indeling gebruikt de app een standaardindeling.
+  if (Array.isArray(i.indeling)) uit.indeling = indelingVan(i.indeling);
+  if (Array.isArray(i.locaties)) uit.locaties = locatiesVan(i.locaties);
+  return uit;
+}
+
+/** De vaste locaties van de winkel (rekken, manden...), om bij een ticket aan te tikken. */
+function locatiesVan(lijst) {
+  return [...new Set(lijst.map((l) => tekst(l, MAX.locatie)).filter(Boolean))].slice(0, 200);
+}
+
+/**
+ * De indeling van de winkel: waar welk stuk naartoe gaat (een rek, een kast...).
+ * Een stuk komt bij de eerste plaats waarvan een woord in de naam van het stuk staat.
+ */
+function indelingVan(lijst) {
+  return (Array.isArray(lijst) ? lijst : []).slice(0, 30).map((r) => ({
+    plaats: tekst(r?.plaats, 40),
+    woorden: [...new Set((Array.isArray(r?.woorden) ? r.woorden : String(r?.woorden || '').split(','))
+      .map((w) => tekst(w, 30).toLowerCase()).filter(Boolean))].slice(0, 30),
+  })).filter((r) => r.plaats);
+}
+
+/** Zoeken en vergelijken zonder hoofdletters en accenten. */
+function zoekVorm(t) {
+  return String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+}
+
+/** Eén sleutel per klant: het gsm-nummer, of anders de naam. */
+export function klantSleutel(klant) {
+  return telefoonSleutel(klant?.telefoon) || 'naam:' + zoekVorm(klant?.naam);
+}
+
+/**
+ * Het klantenbestand blijft altijd bewaard, ook als de bonnen van een klant al gewist zijn.
+ * Oudere gegevens hebben er nog geen: dan bouwen we het uit de bonnen.
+ */
+export function klantenboekVan(staat) {
+  if (staat.klantenboek) return { ...staat.klantenboek };
+  const boek = {};
+  const bonnen = [...(staat.bonnen || [])].sort((a, b) => String(a.binnenOp).localeCompare(String(b.binnenOp)));
+  for (const b of bonnen) zetKlant(boek, b.klant, b.binnenOp || '');
+  return boek;
+}
+
+/**
+ * Klanten uit de luchtvaart (Flying Group, ASL/ISL) moeten op elke bon het vliegtuig vermelden.
+ * Standaard herkend op naam; in Klanten kan het vinkje dit aan of uit zetten.
+ */
+export function vliegtuigKlant(boek, klant) {
+  const k = boek?.[klantSleutel(klant)];
+  if (k && typeof k.vliegtuig === 'boolean') return k.vliegtuig;
+  return VLIEGTUIG_NAAM.test(String(klant?.naam || ''));
+}
+/** Professionele klant: hun bonnen blijven bewaard en er wordt altijd een factuur van gemaakt. */
+export function proKlant(boek, klant) {
+  return Boolean(boek?.[klantSleutel(klant)]?.pro);
+}
+
+/** Bonnen die lang bewaard blijven: van professionele klanten en van klanten met een btw-nummer. */
+export function blijftBewaard(staat, b) {
+  if (b.bewaren) return true;
+  const k = staat.klantenboek?.[klantSleutel(b.klant)];
+  return Boolean(k?.pro || k?.btw || b.factuur?.btw);
+}
+
+/** Stukken met een prijs per kilo: het aantal is dan een gewicht (kommagetal mag). */
+export const PER_KG = /\bper\s*kg\b|\(per kg\)|\bkilo\b/i;
+
+export const VLIEGTUIG_NAAM = /flying|\basl\b|\bisl\b/i;
+
+function zetKlant(boek, klant, iso, extra = {}) {
+  const naam = tekst(klant?.naam, MAX.naam);
+  if (!naam) return null;
+  const sleutel = klantSleutel(klant);
+  const oud = boek[sleutel] || { sinds: iso, adres: '', btw: '', notitie: '' };
+  boek[sleutel] = {
+    ...oud,
+    sleutel,
+    naam,
+    telefoon: tekst(klant.telefoon, MAX.telefoon) || oud.telefoon || '',
+    email: tekst(klant.email, MAX.email) || oud.email || '',
+    ...extra,
+    gewijzigdOp: iso,
+  };
+  return boek[sleutel];
+}
+
+/** De dag van een tijdstip in Belgische tijd (YYYY-MM-DD), voor de kassa en het dagoverzicht. */
+export function dagVan(iso, tijdzone = 'Europe/Brussels') {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return new Intl.DateTimeFormat('en-CA', { timeZone: tijdzone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+}
+
+function noteerBetaling(staat, bon, wijze, iso) {
+  if (!bon.totaal) return;
+  staat.betalingen.push({
+    id: 'p' + Date.parse(iso).toString(36) + Math.random().toString(36).slice(2, 6),
+    bonId: bon.id,
+    nr: bon.nr,
+    naam: bon.klant.naam,
+    bedrag: bon.totaal,
+    wijze: BETAALWIJZEN_KASSA.includes(wijze) ? wijze : 'onbekend',
+    op: iso,
+  });
+}
+
+/**
+ * Na het wijzigen van een bon: de betalingen van die bon kloppen weer met de bon.
+ * Niet meer betaald: de betalingen worden geschrapt. Betaald maar ander totaal: het verschil wordt
+ * bijgeboekt (of terugbetaald), zodat het dagoverzicht nooit dubbel of te weinig telt.
+ */
+function betalingenVolgen(staat, bon, iso) {
+  const actief = staat.betalingen.filter((p) => p.bonId === bon.id && !p.geschraptOp);
+  if (!bon.betaald) {
+    if (actief.length) staat.betalingen = staat.betalingen.map((p) => (p.bonId === bon.id && !p.geschraptOp ? { ...p, geschraptOp: iso } : p));
+    return;
+  }
+  const verschil = Math.round(((bon.totaal || 0) - actief.reduce((n, p) => n + p.bedrag, 0)) * 100) / 100;
+  if (Math.abs(verschil) < 0.01) return;
+  staat.betalingen.push({
+    id: 'p' + Date.parse(iso).toString(36) + Math.random().toString(36).slice(2, 6),
+    bonId: bon.id, nr: bon.nr, naam: bon.klant.naam, bedrag: verschil,
+    wijze: BETAALWIJZEN_KASSA.includes(bon.betaalwijze) ? bon.betaalwijze : (actief[0]?.wijze || 'onbekend'),
+    op: iso, ...(actief.length ? { bijboeking: true } : {}),
+  });
+}
+
+function bedragMetTeken(v) {
+  const n = Math.round(Number(String(v ?? '').replace(',', '.')) * 100) / 100;
+  if (!Number.isFinite(n) || Math.abs(n) >= 100000) throw new Fout('Ongeldig bedrag');
+  return n;
+}
+
+function kassaDag(staat, dag) {
+  if (!datum(dag)) throw new Fout('Ongeldige dag');
+  return { bewegingen: [], ...(staat.kassa[dag] || {}) };
+}
+
+const euro = (n) => '€ ' + Number(n).toFixed(2).replace('.', ',');
+
+/** Een correctie in de kassa: de kassa van die dag moet open zijn, en elke wijziging blijft zichtbaar. */
+function kassaCorrectie(staat, dag, tekst, iso) {
+  const k = kassaDag(staat, dag);
+  if (k.geslotenOp) throw new Fout('De kassa van die dag is afgesloten. Open ze eerst opnieuw om iets te verbeteren.');
+  staat.kassa[dag] = { ...k, correcties: [...(k.correcties || []), { tekst, op: iso }] };
+}
+
+/**
+ * De bonnen die blijven: opgehaalde bonnen verdwijnen na de gekozen bewaartermijn,
+ * gerekend vanaf het ophalen. Wat nog niet opgehaald is, blijft altijd staan.
+ */
+/**
+ * Welke bonnen er bewaard blijven. Er wordt niets meer automatisch gewist na een termijn:
+ * opgehaalde bonnen van gewone klanten verdwijnen enkel met "Dagoverzicht afdrukken en wissen" (dagWissen).
+ */
+export function teBewaren(staat, nu = new Date()) { // eslint-disable-line no-unused-vars
+  return staat.bonnen || [];
+}
+
+/** Elk bonnummer is een willekeurig getal van 6 cijfers, dat nog niet bij een andere bon hoort. */
+function volgendNummer(staat) {
+  const bezet = new Set(staat.bonnen.map((b) => String(b.nr).replace(/\D/g, '')));
+  for (;;) {
+    const nr = String(100000 + Math.floor(Math.random() * 900000));
+    if (!bezet.has(nr)) return nr;
+  }
+}
+
+export class Fout extends Error {
+  constructor(boodschap, status = 400) {
+    super(boodschap);
+    this.status = status;
+  }
+}
+
+/**
+ * Past één handeling toe op de staat en geeft de nieuwe staat terug.
+ * De server roept dit aan op de meest recente versie, zodat twee toestellen
+ * elkaars werk niet overschrijven.
+ */
+export function pasToe(oud, actie, nu = new Date()) {
+  const resultaat = handeling(oud, actie, nu);
+  // Bij elke wijziging meteen opruimen wat over de bewaartermijn is.
+  resultaat.staat.bonnen = teBewaren(resultaat.staat, nu);
+  return resultaat;
+}
+
+function handeling(oud, actie, nu) {
+  const staat = {
+    bonnen: [...(oud.bonnen || [])],
+    teller: { ...(oud.teller || {}) },
+    klanten: { ...(oud.klanten || {}) },
+    instellingen: instellingenVan(oud),
+    prijslijst: oud.prijslijst || null,
+    klantenboek: klantenboekVan(oud),
+    betalingen: [...(oud.betalingen || [])],
+    kassa: { ...(oud.kassa || {}) },
+    taken: [...(oud.taken || [])],
+    ritten: [...(oud.ritten || [])],
+    diensten: [...(oud.diensten || [])],
+    // De online kopie van de winkel-pc blijft "enkel kijken", ook na een toegangscode of een taak.
+    ...(oud.spiegel ? { spiegel: oud.spiegel } : {}),
+  };
+  const iso = nu.toISOString();
+  const zoek = (id) => {
+    const i = staat.bonnen.findIndex((b) => b.id === id);
+    if (i < 0) throw new Fout('Bon niet gevonden', 404);
+    return i;
+  };
+
+  switch (actie?.op) {
+    case 'nieuw': {
+      const v = velden(actie.bon || {});
+      if (!v.klant.naam) throw new Fout('Vul de naam van de klant in');
+      if (!v.vliegtuig && vliegtuigKlant(staat.klantenboek, v.klant)) throw new Fout('Vul het vliegtuig in (bv. de registratie OO-ABC)');
+      const bon = {
+        id: 'b' + nu.getTime().toString(36) + Math.random().toString(36).slice(2, 6),
+        nr: volgendNummer(staat),
+        ...v,
+        status: 'binnen',
+        binnenOp: binnenVan(actie.bon?.binnenDatum, iso) || iso,
+        // Zelf gekozen dag: er hoort geen uur bij op de bon.
+        binnenGekozen: Boolean(binnenVan(actie.bon?.binnenDatum, iso)),
+        klaarOp: '',
+        opgehaaldOp: '',
+        verwittigdOp: '',
+        gewijzigdOp: iso,
+      };
+      // Professionele klant: altijd een factuur.
+      // Pro-klant of klant met btw-nummer: de bon zelf onthoudt dat hij bewaard moet blijven,
+      // ook als de klant later een ander nummer of een andere naam krijgt.
+      if (blijftBewaard(staat, bon)) bon.bewaren = true;
+      if (proKlant(staat.klantenboek, bon.klant)) {
+        const k = staat.klantenboek[klantSleutel(bon.klant)];
+        bon.factuur = { gevraagdOp: iso, gemaaktOp: '', naam: k.naam || '', adres: k.adres || '', btw: k.btw || '', email: bon.klant.email || k.email || '' };
+      }
+      staat.bonnen.push(bon);
+      // Enkel bewaren in Klanten als de winkel dat vraagt; een gekende klant wordt aangevuld.
+      if (actie.bewaarKlant || staat.klantenboek[klantSleutel(bon.klant)]) zetKlant(staat.klantenboek, bon.klant, iso, { laatstGeweest: iso });
+      if (bon.betaald) noteerBetaling(staat, bon, bon.betaalwijze, iso);
+      return { staat, bon };
+    }
+    case 'wijzig': {
+      const i = zoek(actie.id);
+      const v = velden({ ...staat.bonnen[i], ...(actie.bon || {}) });
+      if (!v.klant.naam) throw new Fout('Vul de naam van de klant in');
+      const wasBetaald = staat.bonnen[i].betaald;
+      staat.bonnen[i] = { ...staat.bonnen[i], ...v, gewijzigdOp: iso };
+      // Andere datum van binnenbrengen gekozen? Dezelfde dag laten we het tijdstip ongemoeid.
+      const gekozen = datum(actie.bon?.binnenDatum);
+      if (gekozen && gekozen !== dagVan(staat.bonnen[i].binnenOp)) {
+        staat.bonnen[i].binnenOp = binnenVan(gekozen, iso) || iso;
+        staat.bonnen[i].binnenGekozen = Boolean(binnenVan(gekozen, iso));
+      }
+      if (actie.bewaarKlant || staat.klantenboek[klantSleutel(v.klant)]) zetKlant(staat.klantenboek, v.klant, iso);
+      if (wasBetaald || v.betaald) betalingenVolgen(staat, staat.bonnen[i], iso);
+      return { staat, bon: staat.bonnen[i] };
+    }
+    case 'status': {
+      if (!STATUSSEN.includes(actie.status)) throw new Fout('Onbekende status');
+      const i = zoek(actie.id);
+      const b = { ...staat.bonnen[i], status: actie.status, gewijzigdOp: iso };
+      if (actie.status === 'binnen') { b.klaarOp = ''; b.opgehaaldOp = ''; }
+      if (actie.status === 'klaar') { b.klaarOp = b.klaarOp || iso; b.opgehaaldOp = ''; }
+      if (actie.status === 'opgehaald') {
+        b.klaarOp = b.klaarOp || iso;
+        b.opgehaaldOp = iso;
+        if (actie.betaalwijze !== undefined) {
+          // Al betaald (bv. bij het binnenbrengen): de betaling en betaalwijze blijven zoals ze waren.
+          if (!b.betaald) {
+            noteerBetaling(staat, b, actie.betaalwijze, iso);
+            b.betaald = true;
+            b.betaalwijze = BETAALWIJZEN.includes(actie.betaalwijze) ? actie.betaalwijze : b.betaalwijze;
+          }
+        }
+      }
+      staat.bonnen[i] = b;
+      return { staat, bon: b };
+    }
+    case 'extern': {
+      // Droogkuisstukken naar de partner: per stuk (bon-id + volgnummer) een nieuwe stand.
+      if (!EXTERN.includes(actie.status)) throw new Fout('Onbekende stand');
+      // Met "aantal" kleiner dan het aantal van de regel gaat maar een deel: de regel wordt dan gesplitst
+      // (bv. 5 hemden: 2 naar de partner, 3 blijven in de winkel). Hoogste index eerst, zodat de volgnummers kloppen.
+      const lijst = (Array.isArray(actie.stukken) ? actie.stukken.slice(0, 500) : []).sort((a, b) => (b.index || 0) - (a.index || 0));
+      for (const { id, index, aantal } of lijst) {
+        const i = staat.bonnen.findIndex((b) => b.id === id);
+        if (i < 0 || !staat.bonnen[i].stukken[index]) continue;
+        const stukken = [...staat.bonnen[i].stukken];
+        const st = { ...stukken[index] };
+        const zet = (x) => {
+          if (actie.status) { x.extern = actie.status; x.externOp = iso; } else { delete x.extern; delete x.externOp; }
+          // Wanneer het stuk vertrok (voor de factuur van de partner): blijft staan bij "terug".
+          if (actie.status === 'weg' && !x.vertrokOp) x.vertrokOp = iso;
+          if (!actie.status || actie.status === 'zelf' || actie.status === 'sturen') delete x.vertrokOp;
+          // Welke partner: meegegeven, of de partner die er al stond; wissen als we het zelf doen.
+          if (actie.partner !== undefined) x.partner = tekst(actie.partner, 40);
+          if (!actie.status || actie.status === 'zelf') delete x.partner;
+          if (!x.partner) delete x.partner;
+        };
+        // Hele stuks, behalve bij een prijs per kilo.
+        const n = PER_KG.test(st.naam) ? Math.round(Number(aantal) * 100) / 100 : Math.round(Number(aantal));
+        if (n > 0 && n < st.aantal) {
+          const deel = { ...st, aantal: n };
+          const rest = { ...st, aantal: Math.round((st.aantal - n) * 100) / 100 };
+          // De vlekken verdelen in plaats van verdubbelen.
+          if (st.vlekAantal) {
+            deel.vlekAantal = Math.min(st.vlekAantal, deel.aantal);
+            rest.vlekAantal = st.vlekAantal - deel.vlekAantal;
+            if (!rest.vlekAantal) { delete rest.vlekAantal; if (rest.vlek && !rest.vlekOngeteld) delete rest.vlek; }
+          }
+          zet(deel);
+          stukken.splice(index, 1, rest, deel);
+        } else {
+          zet(st);
+          stukken[index] = st;
+        }
+        staat.bonnen[i] = { ...staat.bonnen[i], stukken, gewijzigdOp: iso };
+      }
+      return { staat };
+    }
+    case 'locatie': {
+      // Waar de kleren liggen of hangen (rek, plank, mand), los van de rest van de bon.
+      const i = zoek(actie.id);
+      const tickets = schoonTickets(actie.tickets);
+      staat.bonnen[i] = tickets
+        ? { ...staat.bonnen[i], tickets, locatie: ticketLocaties(tickets), gewijzigdOp: iso }
+        : { ...staat.bonnen[i], locatie: tekst(actie.locatie, MAX.locatie), gewijzigdOp: iso };
+      return { staat, bon: staat.bonnen[i] };
+    }
+    case 'instellingen': {
+      const nieuw = { ...staat.instellingen };
+      if (actie.bewaarMaanden !== undefined) {
+        const m = Math.round(Number(actie.bewaarMaanden));
+        if (!(m >= BEWAAR_MIN && m <= BEWAAR_MAX)) throw new Fout(`Kies een bewaartermijn van ${BEWAAR_MIN} tot ${BEWAAR_MAX} maanden`);
+        nieuw.bewaarMaanden = m;
+      }
+      if (actie.formaat !== undefined) nieuw.formaat = actie.formaat === 'a4' ? 'a4' : 'klein';
+      if (actie.indeling !== undefined) {
+        if (actie.indeling === null) delete nieuw.indeling;
+        else nieuw.indeling = indelingVan(actie.indeling);
+      }
+      if (actie.partners !== undefined) {
+        const lijst = (Array.isArray(actie.partners) ? actie.partners : []).map((x) => tekst(x, 40)).filter(Boolean);
+        if (!lijst.length) delete nieuw.partners;
+        else nieuw.partners = [...new Set(lijst)].slice(0, 10);
+      }
+      if (actie.locaties !== undefined) {
+        if (actie.locaties === null) delete nieuw.locaties;
+        else nieuw.locaties = locatiesVan(Array.isArray(actie.locaties) ? actie.locaties : []);
+      }
+      staat.instellingen = nieuw;
+      return { staat };
+    }
+    case 'klantenImport': {
+      // Een lijst klanten in één keer toevoegen (bv. uit Excel). Bestaande klanten (zelfde gsm,
+      // of zonder gsm dezelfde naam) worden enkel aangevuld: wat al ingevuld is, blijft staan.
+      const lijst = Array.isArray(actie.klanten) ? actie.klanten.slice(0, 2000) : [];
+      let nieuw = 0;
+      let aangevuld = 0;
+      for (const k of lijst) {
+        const naam = tekst(k?.naam, MAX.naam);
+        if (!naam) continue;
+        const invoer = { naam, telefoon: tekst(k.telefoon, MAX.telefoon), email: tekst(k.email, MAX.email) };
+        const sleutel = klantSleutel(invoer);
+        const oud = staat.klantenboek[sleutel];
+        const extra = {
+          adres: oud?.adres || tekst(k.adres, 160),
+          btw: oud?.btw || tekst(k.btw, 30),
+          notitie: oud?.notitie || tekst(k.notitie, 300),
+        };
+        if (oud) {
+          staat.klantenboek[sleutel] = {
+            ...oud,
+            ...extra,
+            telefoon: oud.telefoon || invoer.telefoon,
+            email: oud.email || invoer.email,
+            gewijzigdOp: iso,
+          };
+          aangevuld++;
+        } else {
+          zetKlant(staat.klantenboek, invoer, iso, extra);
+          nieuw++;
+        }
+      }
+      return { staat, nieuw, aangevuld };
+    }
+    case 'klantNieuw': {
+      // Een klant zelf toevoegen in Klanten.
+      const k = actie.klant || {};
+      const naam = tekst(k.naam, MAX.naam);
+      if (!naam) throw new Fout('Vul de naam van de klant in');
+      const sleutel = klantSleutel({ naam, telefoon: k.telefoon });
+      if (staat.klantenboek[sleutel]) throw new Fout(`${staat.klantenboek[sleutel].naam} staat al in Klanten`);
+      zetKlant(staat.klantenboek, { naam, telefoon: k.telefoon, email: k.email }, iso, {
+        adres: tekst(k.adres, 160), btw: tekst(k.btw, 30), notitie: tekst(k.notitie, 300),
+        vlekkenrapport: Boolean(k.vlekkenrapport), pro: Boolean(k.pro), kiloprijs: prijsOfLeeg(k.kiloprijs),
+        ...(typeof k.vliegtuig === 'boolean' ? { vliegtuig: k.vliegtuig } : {}),
+      });
+      return { staat, klant: staat.klantenboek[sleutel] };
+    }
+    case 'klantWeg': {
+      // Uit Klanten halen; de bonnen van de klant blijven gewoon staan.
+      const sleutel = String(actie.sleutel || '');
+      if (!staat.klantenboek[sleutel]) throw new Fout('Klant niet gevonden', 404);
+      delete staat.klantenboek[sleutel];
+      return { staat };
+    }
+    case 'klant': {
+      // Klantgegevens aanvullen (adres, btw-nummer voor facturen, notitie).
+      const sleutel = String(actie.sleutel || '');
+      const oud = staat.klantenboek[sleutel];
+      if (!oud) throw new Fout('Klant niet gevonden', 404);
+      const k = actie.klant || {};
+      const naam = tekst(k.naam ?? oud.naam, MAX.naam);
+      if (!naam) throw new Fout('Vul de naam van de klant in');
+      staat.klantenboek[sleutel] = {
+        ...oud,
+        naam,
+        telefoon: tekst(k.telefoon ?? oud.telefoon, MAX.telefoon),
+        email: tekst(k.email ?? oud.email, MAX.email),
+        adres: tekst(k.adres ?? oud.adres, 160),
+        btw: tekst(k.btw ?? oud.btw, 30),
+        notitie: tekst(k.notitie ?? oud.notitie, 300),
+        // Klant krijgt een aparte A4-bon met vlekkencontrole (bv. een bedrijf dat dat vraagt).
+        vlekkenrapport: Boolean(k.vlekkenrapport ?? oud.vlekkenrapport),
+        // Professionele klant (bonnen bewaren, altijd factuur) en hun prijs voor was per kilo.
+        pro: Boolean(k.pro ?? oud.pro),
+        kiloprijs: k.kiloprijs !== undefined ? prijsOfLeeg(k.kiloprijs) : oud.kiloprijs ?? null,
+        // Vaste stukken: komen vanzelf op een nieuwe bon voor deze klant (bv. altijd "waszak").
+        ...(k.vasteStukken !== undefined
+          ? { vasteStukken: schoonStukken(k.vasteStukken).slice(0, 20).map(({ naam, aantal, prijs, behandeling }) => ({ naam, aantal, prijs, behandeling })) }
+          : oud.vasteStukken ? { vasteStukken: oud.vasteStukken } : {}),
+        // Op elke bon het vliegtuig vermelden (luchtvaartklanten).
+        ...(typeof (k.vliegtuig ?? oud.vliegtuig) === 'boolean' ? { vliegtuig: Boolean(k.vliegtuig ?? oud.vliegtuig) } : {}),
+        gewijzigdOp: iso,
+      };
+      // Pro of btw: alle bonnen van deze klant blijven bewaard (ook na een nieuw nummer of een nieuwe naam).
+      const nk = staat.klantenboek[sleutel];
+      if (nk.pro || nk.btw) {
+        staat.bonnen = staat.bonnen.map((b) => (klantSleutel(b.klant) === sleutel && !b.bewaren ? { ...b, bewaren: true } : b));
+      }
+      // Ander nummer of andere naam: de klant verhuist naar de nieuwe sleutel, zodat nieuwe bonnen hem herkennen.
+      const nieuweSleutel = klantSleutel({ naam: nk.naam, telefoon: nk.telefoon });
+      if (nieuweSleutel && nieuweSleutel !== sleutel) {
+        if (staat.klantenboek[nieuweSleutel]) throw new Fout(`Er staat al een klant met dat nummer: ${staat.klantenboek[nieuweSleutel].naam}`);
+        staat.klantenboek[nieuweSleutel] = { ...nk, sleutel: nieuweSleutel };
+        delete staat.klantenboek[sleutel];
+        return { staat, klant: staat.klantenboek[nieuweSleutel] };
+      }
+      return { staat, klant: staat.klantenboek[sleutel] };
+    }
+    case 'kassaOpen': {
+      const k = kassaDag(staat, actie.dag);
+      if (k.geslotenOp) throw new Fout('De kassa van die dag is al afgesloten');
+      const begin = bedragMetTeken(actie.begin);
+      if (begin < 0) throw new Fout('Het beginbedrag kan niet negatief zijn');
+      staat.kassa[actie.dag] = { ...k, begin, geopendOp: k.geopendOp || iso };
+      // Een beginbedrag achteraf aanpassen is een correctie.
+      if (k.geopendOp && k.begin !== begin) kassaCorrectie(staat, actie.dag, `Beginbedrag ${euro(k.begin ?? 0)} → ${euro(begin)}`, iso);
+      return { staat };
+    }
+    case 'kassaBeweging': {
+      const k = kassaDag(staat, actie.dag);
+      if (k.geslotenOp) throw new Fout('De kassa van die dag is al afgesloten');
+      const b = bedragMetTeken(actie.bedrag);
+      if (!b) throw new Fout('Vul een bedrag in');
+      const reden = tekst(actie.reden, 80);
+      if (!reden) throw new Fout('Vul een reden in, bv. "wisselgeld" of "naar de bank"');
+      staat.kassa[actie.dag] = { ...k, bewegingen: [...k.bewegingen, { bedrag: b, reden, op: iso }] };
+      return { staat };
+    }
+    case 'kassaSluit': {
+      const k = kassaDag(staat, actie.dag);
+      const geteld = bedragMetTeken(actie.geteld);
+      if (geteld < 0) throw new Fout('Het getelde bedrag kan niet negatief zijn');
+      staat.kassa[actie.dag] = { ...k, geteld, geslotenOp: iso };
+      return { staat };
+    }
+    case 'kassaBewegingWijzig': {
+      // Een verkeerde beweging (geld in/uit) verbeteren of schrappen.
+      const k = kassaDag(staat, actie.dag);
+      const i = Number(actie.index);
+      const oud = k.bewegingen[i];
+      if (!Number.isInteger(i) || !oud) throw new Fout('Beweging niet gevonden', 404);
+      const wat = `${oud.bedrag < 0 ? 'Uit' : 'In'} de kassa "${oud.reden}" ${euro(Math.abs(oud.bedrag))}`;
+      if (actie.weg) {
+        kassaCorrectie(staat, actie.dag, `${wat}: geschrapt`, iso);
+        staat.kassa[actie.dag].bewegingen = k.bewegingen.filter((_, j) => j !== i);
+        return { staat };
+      }
+      const b = bedragMetTeken(actie.bedrag);
+      if (!b) throw new Fout('Vul een bedrag in');
+      const reden = tekst(actie.reden, 80);
+      if (!reden) throw new Fout('Vul een reden in');
+      kassaCorrectie(staat, actie.dag, `${wat} → ${b < 0 ? 'uit' : 'in'} "${reden}" ${euro(Math.abs(b))}`, iso);
+      staat.kassa[actie.dag].bewegingen = k.bewegingen.map((x, j) => (j === i ? { ...x, bedrag: b, reden } : x));
+      return { staat };
+    }
+    case 'betalingWijzig': {
+      // Een verkeerd ingegeven betaling verbeteren (betaalwijze of bedrag) of ongedaan maken.
+      const i = staat.betalingen.findIndex((p) => p.id === actie.id);
+      if (i < 0) throw new Fout('Betaling niet gevonden', 404);
+      const p = staat.betalingen[i];
+      if (p.geschraptOp) throw new Fout('Deze betaling is al geschrapt');
+      const dag = dagVan(p.op);
+      const wat = `Betaling ${p.nr} (${p.naam}) ${euro(p.bedrag)} ${p.wijze}`;
+      if (actie.weg) {
+        kassaCorrectie(staat, dag, `${wat}: geschrapt`, iso);
+        staat.betalingen[i] = { ...p, geschraptOp: iso };
+        // De bon staat dan weer als niet betaald.
+        const b = staat.bonnen.findIndex((x) => x.id === p.bonId);
+        if (b >= 0) staat.bonnen[b] = { ...staat.bonnen[b], betaald: false, betaalwijze: '', gewijzigdOp: iso };
+        return { staat };
+      }
+      const wijze = actie.wijze === undefined ? p.wijze : actie.wijze;
+      if (!BETAALWIJZEN_KASSA.includes(wijze)) throw new Fout('Kies een betaalwijze');
+      const bedrag = actie.bedrag === undefined ? p.bedrag : bedragMetTeken(actie.bedrag);
+      if (!(bedrag > 0)) throw new Fout('Het bedrag moet groter dan 0 zijn');
+      if (wijze === p.wijze && bedrag === p.bedrag) return { staat };
+      kassaCorrectie(staat, dag, `${wat} → ${euro(bedrag)} ${wijze}`, iso);
+      staat.betalingen[i] = { ...p, wijze, bedrag };
+      const b = staat.bonnen.findIndex((x) => x.id === p.bonId);
+      if (b >= 0 && wijze !== p.wijze) staat.bonnen[b] = { ...staat.bonnen[b], betaalwijze: wijze, gewijzigdOp: iso };
+      return { staat };
+    }
+    case 'dagWissen': {
+      // Na het dagoverzicht: alle betalingen en opgehaalde bonnen weg. Bonnen die nog opgehaald
+      // moeten worden blijven staan, net als een opgehaalde bon waarvoor nog een factuur gemaakt moet worden.
+      // Bonnen van professionele klanten en klanten met een btw-nummer blijven bewaard (facturen, kilo's per week).
+      staat.bonnen = staat.bonnen.filter((b) => b.status !== 'opgehaald' || (b.factuur && (!b.factuur.gemaaktOp || !b.factuur.betaaldOp)) || blijftBewaard(staat, b));
+      staat.betalingen = [];
+      staat.kassa = {};
+      return { staat };
+    }
+    case 'kassaHeropen': {
+      const k = kassaDag(staat, actie.dag);
+      staat.kassa[actie.dag] = { ...k, geteld: undefined, geslotenOp: '' };
+      return { staat };
+    }
+    case 'factuurVraag': {
+      // De klant vraagt een factuur; de zaakvoerder maakt die later zelf (bv. via Peppol).
+      const i = zoek(actie.id);
+      const b = staat.bonnen[i];
+      if (actie.aan === false) {
+        staat.bonnen[i] = { ...b, factuur: null, gewijzigdOp: iso };
+        return { staat, bon: staat.bonnen[i] };
+      }
+      const g = actie.gegevens || {};
+      const vorig = b.factuur || {};
+      const sleutel = klantSleutel(b.klant);
+      const k = staat.klantenboek[sleutel] || {};
+      const factuur = {
+        gevraagdOp: vorig.gevraagdOp || iso,
+        gemaaktOp: vorig.gemaaktOp || '',
+        ...(vorig.betaaldOp ? { betaaldOp: vorig.betaaldOp } : {}),
+        naam: tekst(g.naam ?? vorig.naam ?? '', MAX.naam),
+        adres: tekst(g.adres ?? vorig.adres ?? k.adres ?? '', 160),
+        btw: tekst(g.btw ?? vorig.btw ?? k.btw ?? '', 30),
+        email: tekst(g.email ?? vorig.email ?? b.klant.email ?? k.email ?? '', MAX.email),
+      };
+      staat.bonnen[i] = { ...b, factuur, gewijzigdOp: iso };
+      // Adres en btw-nummer ook bij de klant bewaren, voor een volgende keer.
+      if (staat.klantenboek[sleutel]) {
+        staat.klantenboek[sleutel] = {
+          ...k,
+          adres: factuur.adres || k.adres || '',
+          btw: factuur.btw || k.btw || '',
+          email: k.email || factuur.email,
+        };
+      }
+      return { staat, bon: staat.bonnen[i] };
+    }
+    case 'partnerPrijs': {
+      // Wat de partner ons per stuk aanrekent (om hun factuur na te kijken en de marge te zien).
+      const i = zoek(actie.id);
+      const stukken = [...staat.bonnen[i].stukken];
+      if (!stukken[actie.index]) throw new Fout('Stuk niet gevonden', 404);
+      const st = { ...stukken[actie.index] };
+      const pp = prijsOfLeeg(actie.prijs);
+      if (pp == null) delete st.partnerPrijs; else st.partnerPrijs = pp;
+      stukken[actie.index] = st;
+      staat.bonnen[i] = { ...staat.bonnen[i], stukken, gewijzigdOp: iso };
+      return { staat, bon: staat.bonnen[i] };
+    }
+    case 'factuurBetaald': {
+      // De klant heeft de factuur betaald (overschrijving): niet meer bij de openstaande facturen.
+      const i = zoek(actie.id);
+      const b = staat.bonnen[i];
+      if (!b.factuur) throw new Fout('Voor deze bon is geen factuur gevraagd');
+      staat.bonnen[i] = { ...b, factuur: { ...b.factuur, betaaldOp: actie.betaald === false ? '' : iso }, gewijzigdOp: iso };
+      return { staat, bon: staat.bonnen[i] };
+    }
+    case 'factuurGemaakt': {
+      const i = zoek(actie.id);
+      const b = staat.bonnen[i];
+      if (!b.factuur) throw new Fout('Voor deze bon is geen factuur gevraagd');
+      staat.bonnen[i] = { ...b, factuur: { ...b.factuur, gemaaktOp: actie.gemaakt === false ? '' : iso }, gewijzigdOp: iso };
+      return { staat, bon: staat.bonnen[i] };
+    }
+    case 'prijslijst': {
+      // null zet de standaardprijzen terug.
+      staat.prijslijst = actie.prijslijst === null ? null : schoonPrijslijst(actie.prijslijst);
+      if (actie.prijslijst !== null && !staat.prijslijst) throw new Fout('Ongeldige prijslijst');
+      return { staat };
+    }
+    // Takenlijst (eigen taken van de winkel): toevoegen, afvinken, tekst wijzigen, wissen.
+    case 'taak': {
+      const wat = actie.wat;
+      if (wat === 'nieuw') {
+        const t = tekst(actie.tekst, 200);
+        if (!t) throw new Fout('Typ eerst een taak');
+        if (staat.taken.length >= 200) throw new Fout('De takenlijst is vol: wis eerst afgewerkte taken');
+        const dag = /^\d{4}-\d{2}-\d{2}$/.test(actie.tegen || '') ? actie.tegen : '';
+        staat.taken.push({ id: 't' + nu.getTime().toString(36) + Math.random().toString(36).slice(2, 6), tekst: t, tegen: dag, gemaaktOp: iso, klaarOp: '' });
+        return { staat };
+      }
+      if (wat === 'wisKlaar') {
+        staat.taken = staat.taken.filter((t) => !t.klaarOp);
+        return { staat };
+      }
+      const i = staat.taken.findIndex((t) => t.id === actie.id);
+      if (i < 0) throw new Fout('Taak niet gevonden', 404);
+      if (wat === 'klaar') staat.taken[i] = { ...staat.taken[i], klaarOp: actie.klaar === false ? '' : iso };
+      else if (wat === 'wis') staat.taken.splice(i, 1);
+      else throw new Fout('Onbekende handeling');
+      return { staat };
+    }
+    // Planning van de ritten: ophalen bij of terugbrengen naar een klant, met adres en uur (ongeveer).
+    case 'rit': {
+      const wat = actie.wat;
+      // Privacy: ritten van meer dan 14 dagen geleden worden gewist.
+      const grens = dagIso(new Date(nu.getTime() - 14 * 86400000));
+      staat.ritten = staat.ritten.filter((r) => r.datum >= grens);
+      if (wat === 'nieuw') {
+        if (!isDag(actie.datum)) throw new Fout('Kies een dag');
+        const adres = tekst(actie.adres, 160);
+        const naam = tekst(actie.naam, MAX.naam);
+        if (!adres && !naam) throw new Fout('Vul een naam of een adres in');
+        if (staat.ritten.length >= 300) throw new Fout('Te veel ritten: wis eerst oude ritten');
+        staat.ritten.push({
+          id: 'r' + nu.getTime().toString(36) + Math.random().toString(36).slice(2, 6),
+          soort: actie.soort === 'terugbrengen' ? 'terugbrengen' : 'ophalen',
+          datum: actie.datum, uur: isUur(actie.uur) ? actie.uur : '',
+          naam, adres, telefoon: tekst(actie.telefoon, MAX.telefoon), notitie: tekst(actie.notitie, 300),
+          gemaaktOp: iso, klaarOp: '',
+        });
+        return { staat };
+      }
+      const i = staat.ritten.findIndex((r) => r.id === actie.id);
+      if (i < 0) throw new Fout('Rit niet gevonden', 404);
+      if (wat === 'klaar') staat.ritten[i] = { ...staat.ritten[i], klaarOp: actie.klaar === false ? '' : iso };
+      else if (wat === 'wis') staat.ritten.splice(i, 1);
+      else throw new Fout('Onbekende handeling');
+      return { staat };
+    }
+    // Personeelsplanning: wie werkt welke dag, van wanneer tot wanneer.
+    case 'dienst': {
+      const wat = actie.wat;
+      const grens = dagIso(new Date(nu.getTime() - 35 * 86400000));
+      staat.diensten = staat.diensten.filter((d) => d.datum >= grens);
+      const nieuwId = () => 'd' + nu.getTime().toString(36) + Math.random().toString(36).slice(2, 6);
+      if (wat === 'nieuw') {
+        const naam = tekst(actie.naam, 40);
+        if (!naam) throw new Fout('Vul een naam in');
+        if (!isDag(actie.datum)) throw new Fout('Kies een dag');
+        if (staat.diensten.length >= 600) throw new Fout('De planning is vol');
+        staat.diensten.push({ id: nieuwId(), datum: actie.datum, naam, van: isUur(actie.van) ? actie.van : '', tot: isUur(actie.tot) ? actie.tot : '' });
+        return { staat };
+      }
+      if (wat === 'kopieerWeek') {
+        // De planning van een week overnemen naar een andere week (maandag tot zondag).
+        if (!isDag(actie.van) || !isDag(actie.naar)) throw new Fout('Ongeldige week');
+        const dagNa = (dag, n) => dagIso(new Date(Date.parse(dag + 'T12:00:00Z') + n * 86400000));
+        const kopie = [];
+        for (let n = 0; n < 7; n++) {
+          for (const d of staat.diensten.filter((x) => x.datum === dagNa(actie.van, n))) kopie.push({ ...d, id: nieuwId(), datum: dagNa(actie.naar, n) });
+        }
+        if (!kopie.length) throw new Fout('In die week staat niets om over te nemen');
+        if (staat.diensten.length + kopie.length > 600) throw new Fout('De planning is vol');
+        staat.diensten.push(...kopie);
+        return { staat };
+      }
+      const i = staat.diensten.findIndex((d) => d.id === actie.id);
+      if (i < 0) throw new Fout('Niet gevonden', 404);
+      if (wat === 'wis') staat.diensten.splice(i, 1);
+      else throw new Fout('Onbekende handeling');
+      return { staat };
+    }
+    case 'verwittigd': {
+      const i = zoek(actie.id);
+      staat.bonnen[i] = { ...staat.bonnen[i], verwittigdOp: iso, gewijzigdOp: iso };
+      return { staat, bon: staat.bonnen[i] };
+    }
+    case 'verwijder': {
+      const i = zoek(actie.id);
+      const [bon] = staat.bonnen.splice(i, 1);
+      // Een verwijderde bon was een fout: ook zijn betalingen verdwijnen.
+      staat.betalingen = staat.betalingen.filter((p) => p.bonId !== bon.id);
+      return { staat, bon };
+    }
+    case 'klantcode': {
+      // De server maakt de code en geeft enkel de hash door; de code zelf bewaren we nooit.
+      const sleutel = telefoonSleutel(actie.telefoon);
+      if (!sleutel) throw new Fout('Vul eerst een geldig gsm-nummer in');
+      if (!actie.hash || !actie.zout) throw new Fout('Code ontbreekt');
+      const vorig = staat.klanten[sleutel];
+      staat.klanten[sleutel] = {
+        naam: tekst(actie.naam, MAX.naam) || vorig?.naam || '',
+        hash: actie.hash,
+        zout: actie.zout,
+        v: (vorig?.v || 0) + 1, // oude aanmeldingen vervallen bij een nieuwe code
+        sinds: vorig?.sinds || iso,
+        laatsteLogin: vorig?.laatsteLogin || '',
+        fouten: 0,
+        geblokkeerdTot: '',
+      };
+      return { staat, sleutel };
+    }
+    case 'loginFout': {
+      const k = staat.klanten[actie.sleutel];
+      if (!k) throw new Fout('Onbekende klant', 404);
+      const fouten = (k.fouten || 0) + 1;
+      staat.klanten[actie.sleutel] = fouten >= BLOKKEER_NA
+        ? { ...k, fouten: 0, geblokkeerdTot: new Date(nu.getTime() + BLOKKEER_MS).toISOString() }
+        : { ...k, fouten };
+      return { staat };
+    }
+    case 'loginOk': {
+      const k = staat.klanten[actie.sleutel];
+      if (!k) throw new Fout('Onbekende klant', 404);
+      staat.klanten[actie.sleutel] = { ...k, fouten: 0, geblokkeerdTot: '', laatsteLogin: iso };
+      return { staat };
+    }
+    default:
+      throw new Fout('Onbekende handeling');
+  }
+}
+
+/** Wat de winkel te zien krijgt: alles, behalve de geheime delen van de klantcodes. */
+export function voorWinkel(staat, nu = new Date()) {
+  const klanten = {};
+  for (const [sleutel, k] of Object.entries(staat.klanten || {})) {
+    klanten[sleutel] = { naam: k.naam, sinds: k.sinds, laatsteLogin: k.laatsteLogin };
+  }
+  return {
+    bonnen: teBewaren(staat, nu),
+    teller: staat.teller || {},
+    klanten,
+    instellingen: instellingenVan(staat),
+    prijslijst: staat.prijslijst || null,
+    // Online kopie van de winkel-pc: wanneer bijgewerkt (het agenda-adres blijft op de server).
+    spiegel: staat.spiegel ? { op: staat.spiegel.op, agenda: Boolean(staat.spiegel.agenda) } : null,
+    klantenboek: klantenboekVan(staat),
+    betalingen: staat.betalingen || [],
+    kassa: staat.kassa || {},
+    taken: staat.taken || [],
+    ritten: staat.ritten || [],
+    diensten: staat.diensten || [],
+  };
+}
+
+/** Wat een klant te zien krijgt: enkel de eigen bonnen, zonder interne opmerkingen of locatie. */
+export function voorKlant(staat, sleutel, nu = new Date()) {
+  const bonnen = teBewaren(staat, nu)
+    .filter((b) => telefoonSleutel(b.klant?.telefoon) === sleutel)
+    .map((b) => ({
+      nr: b.nr,
+      soort: b.soort,
+      // Intern blijft intern: de klant ziet niet dat (of bij welke partner) een stuk weg is.
+      stukken: b.stukken.map(({ extern, externOp, vertrokOp, partner, partnerPrijs, ...st }) => st),
+      totaal: b.totaal,
+      prijsOpen: Boolean(b.prijsOpen),
+      status: b.status,
+      binnenOp: b.binnenOp,
+      klaarTegen: b.klaarTegen,
+      klaarOp: b.klaarOp,
+      opgehaaldOp: b.opgehaaldOp,
+      betaald: b.betaald,
+    }))
+    .sort((a, b) => b.binnenOp.localeCompare(a.binnenOp));
+  return { naam: staat.klanten?.[sleutel]?.naam || '', bonnen };
+}

@@ -1,0 +1,56 @@
+{
+  "name": "crystal-winkel",
+  "productName": "Crystal Winkel",
+  "version": "2.34.1",
+  "description": "Bonnen voor strijk, was en droogkuis bij Crystal Services, volledig offline",
+  "author": "Crystal Services",
+  "private": true,
+  "type": "module",
+  "main": "main.js",
+  "scripts": {
+    "kopieer": "node kopieer.js",
+    "start": "node kopieer.js && electron .",
+    "dist": "node kopieer.js && electron-builder --win nsis --x64",
+    "release": "node kopieer.js && electron-builder --win nsis --x64 --publish always"
+  },
+  "build": {
+    "appId": "be.crystal-services.winkel",
+    "productName": "Crystal Winkel",
+    "files": [
+      "main.js",
+      "preload.cjs",
+      "app/**",
+      "build/icon.png",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Crystal Winkel",
+      "artifactName": "Crystal-Winkel-Setup-${version}.exe",
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Bogdan-mg",
+      "repo": "winkel-update",
+      "releaseType": "draft"
+    }
+  },
+  "devDependencies": {
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
+  }
+}
